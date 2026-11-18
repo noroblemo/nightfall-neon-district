@@ -715,12 +715,13 @@ export class NightfallGame {
     if (this.chatOpen || this.controlsOpen || this.paused) return;
     const sens = this.lookSensitivity;
     if (this.currentMode === 'car') {
-      this.driveLookYaw = clamp(this.driveLookYaw + event.movementX * 0.0024 * sens, -2.5, 2.5);
+      // Yaw grows counter-clockwise in this world, so mouse-right must subtract.
+      this.driveLookYaw = clamp(this.driveLookYaw - event.movementX * 0.0024 * sens, -2.5, 2.5);
       this.drivePitch = clamp(this.drivePitch + event.movementY * 0.0016 * sens, 0.02, 0.78);
       this.lastLookMove = performance.now();
       return;
     }
-    this.cameraYaw += event.movementX * 0.0022 * sens;
+    this.cameraYaw -= event.movementX * 0.0022 * sens;
     if (this.cameraYaw > Math.PI) this.cameraYaw -= TAU;
     if (this.cameraYaw < -Math.PI) this.cameraYaw += TAU;
     this.cameraPitch = clamp(this.cameraPitch - event.movementY * 0.0019 * sens, -1.02, 0.68);
@@ -885,8 +886,9 @@ export class NightfallGame {
         - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
       const sin = Math.sin(this.cameraYaw);
       const cos = Math.cos(this.cameraYaw);
-      moveX = sin * forward + cos * strafe;
-      moveZ = cos * forward - sin * strafe;
+      // Strafe right vector is (-cos, sin); the (cos, -sin) basis points screen-left.
+      moveX = sin * forward - cos * strafe;
+      moveZ = cos * forward + sin * strafe;
       const length = Math.hypot(moveX, moveZ);
       if (length > 0.001) {
         moveX /= length;
@@ -990,9 +992,10 @@ export class NightfallGame {
     const steerAuthority = clamp(absSpeed / 5, 0, 1) * (1 - clamp(absSpeed / 105, 0, 0.52));
     const steerScale = handbrake ? 1.55 : 1;
     if (absSpeed > 0.25) {
-      car.yaw += steerInput * 1.5 * steerAuthority * steerScale * dt * Math.sign(car.speed || 1);
+      // steerInput > 0 means right; yaw grows counter-clockwise, so subtract.
+      car.yaw -= steerInput * 1.5 * steerAuthority * steerScale * dt * Math.sign(car.speed || 1);
     }
-    car.steer = damp(car.steer, steerInput * (handbrake ? 0.7 : 0.5), 7, dt);
+    car.steer = damp(car.steer, -steerInput * (handbrake ? 0.7 : 0.5), 7, dt);
 
     const forwardX = Math.sin(car.yaw);
     const forwardZ = Math.cos(car.yaw);
