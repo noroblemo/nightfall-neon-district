@@ -2,68 +2,370 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#090a0e" />
+    <meta name="theme-color" content="#04050a" />
     <meta
       name="description"
-      content="A small, dependency-free calculator with keyboard support and persistent history."
+      content="Nightfall: Neon District — a co-op open-world action and driving game for the browser. Host a city, send the code, and tear through the neon grid with a friend."
     />
-    <title>Calculator</title>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧮</text></svg>"
-    />
-    <link rel="stylesheet" href="style.css" />
+    <title>NIGHTFALL // Neon District — Co-op Open World</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%2305070f'/><path d='M22 76V24h14l28 33V24h14v52H64L36 43v33z' fill='%2345f4ff'/></svg>" />
+    <link rel="preload" href="/public/fonts/barlow-600.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/public/fonts/space-grotesk.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <main class="app">
-      <section class="calculator" aria-label="Calculator">
-        <div class="display">
-          <div class="expression" id="expression" aria-hidden="true"></div>
-          <div class="result" id="result" role="status" aria-live="polite">0</div>
+    <canvas id="gameCanvas" role="application" aria-label="Game viewport" tabindex="0"></canvas>
+    <div class="screen-fx" aria-hidden="true">
+      <div class="screen-fx__vignette"></div>
+      <div class="screen-fx__grain"></div>
+      <div class="screen-fx__scanlines"></div>
+    </div>
+
+    <div id="loading" class="loading">
+      <div class="loading__inner">
+        <div class="loader-monogram">N</div>
+        <div class="loading__title">NIGHTFALL</div>
+        <div class="loading__sub">NEON DISTRICT</div>
+        <div class="loading__track"><span id="loadingBar"></span></div>
+        <div id="loadingStatus" class="loading__status">ASSEMBLING THE DISTRICT</div>
+        <div class="loading__tip">Tip: the best way out of a corporate district is a very fast car.</div>
+      </div>
+    </div>
+
+    <section id="landing" class="landing hidden" aria-label="Main menu">
+      <header class="landing__top">
+        <div class="brand">
+          <div class="brand__mark">N</div>
+          <div class="brand__text">
+            <span>NIGHTFALL</span>
+            <small>NEON DISTRICT / CO-OP</small>
+          </div>
+        </div>
+        <div class="landing__top-right">
+          <div id="serverBadge" class="server-badge" data-state="checking">
+            <i></i><span id="serverBadgeText">CHECKING NETWORK</span>
+          </div>
+          <button id="howToBtn" class="mini-btn" type="button">CONTROLS</button>
+        </div>
+      </header>
+
+      <main class="landing__main">
+        <div class="hero">
+          <div class="eyebrow"><span class="eyebrow__line"></span> OPEN WORLD / CO-OP / ACTION DRIVING</div>
+          <h1 class="game-title" aria-label="Nightfall">
+            <span class="game-title__top">NIGHT</span><span class="game-title__bottom">FALL</span>
+          </h1>
+          <p class="hero__lede">
+            The grid is awake. Breach three data caches with your partner, shake the security swarm,
+            and disappear into the neon. Or just steal a supercar and drive until the city runs out.
+          </p>
+
+          <div class="menu-card">
+            <label class="field">
+              <span class="field__label">CALLSIGN</span>
+              <input id="nameInput" class="field__input" maxlength="14" value="GHOST" autocomplete="off" spellcheck="false" />
+            </label>
+
+            <button id="hostBtn" class="action-btn action-btn--primary" type="button">
+              <span class="action-btn__index">01</span>
+              <span class="action-btn__body">
+                <strong>HOST THE CITY</strong>
+                <small>Create a room and send your cousin the code</small>
+              </span>
+              <span class="action-btn__arrow">→</span>
+            </button>
+
+            <div class="join-row">
+              <label class="field field--room">
+                <span class="field__label">ROOM CODE</span>
+                <input id="roomInput" class="field__input field__input--code" maxlength="6" placeholder="—————" autocomplete="off" spellcheck="false" />
+              </label>
+              <button id="joinBtn" class="action-btn action-btn--join" type="button">
+                <span class="action-btn__body"><strong>JOIN</strong><small>Link to a friend's city</small></span>
+                <span class="action-btn__arrow">↗</span>
+              </button>
+            </div>
+
+            <button id="soloBtn" class="solo-btn" type="button">
+              <span>CONTINUE SOLO</span>
+              <small>Patrol the district offline</small>
+            </button>
+
+            <p id="startError" class="start-error" role="alert"></p>
+          </div>
+
+          <div class="connection-note">
+            <span class="connection-note__dot"></span>
+            <span id="connectionText">Online play ready — host a room, then share the code.</span>
+          </div>
         </div>
 
-        <div class="keys" id="keys">
-          <button type="button" class="key key--function" data-action="clear" aria-label="All clear">AC</button>
-          <button type="button" class="key key--function" data-action="sign" aria-label="Toggle sign">±</button>
-          <button type="button" class="key key--function" data-action="percent" aria-label="Percent">%</button>
-          <button type="button" class="key key--operator" data-operator="/" aria-label="Divide">÷</button>
+        <aside class="side-panel">
+          <div class="side-panel__eyebrow">DISTRICT BRIEF // 01</div>
+          <h2>THE GHOST<br />PROTOCOL</h2>
+          <p>Three encrypted caches. One extraction gate. Every drone in the district is looking for you.</p>
+          <ul class="brief-list">
+            <li><span>01</span> Breach the caches hidden across the neon grid.</li>
+            <li><span>02</span> Use the swarm response to your advantage — split up.</li>
+            <li><span>03</span> Return to the plaza and hold extraction.</li>
+          </ul>
+          <div class="street-readout">
+            <div><span>DISTRICT</span><strong>NEON GRID / 07</strong></div>
+            <div><span>CONDITIONS</span><strong>RAIN / 23:47</strong></div>
+            <div><span>TRAFFIC</span><strong>LIVE</strong></div>
+          </div>
+        </aside>
+      </main>
 
-          <button type="button" class="key" data-digit="7">7</button>
-          <button type="button" class="key" data-digit="8">8</button>
-          <button type="button" class="key" data-digit="9">9</button>
-          <button type="button" class="key key--operator" data-operator="*" aria-label="Multiply">×</button>
-
-          <button type="button" class="key" data-digit="4">4</button>
-          <button type="button" class="key" data-digit="5">5</button>
-          <button type="button" class="key" data-digit="6">6</button>
-          <button type="button" class="key key--operator" data-operator="-" aria-label="Subtract">−</button>
-
-          <button type="button" class="key" data-digit="1">1</button>
-          <button type="button" class="key" data-digit="2">2</button>
-          <button type="button" class="key" data-digit="3">3</button>
-          <button type="button" class="key key--operator" data-operator="+" aria-label="Add">+</button>
-
-          <button type="button" class="key key--zero" data-digit="0">0</button>
-          <button type="button" class="key" data-action="decimal" aria-label="Decimal point">.</button>
-          <button type="button" class="key key--equals" data-action="equals" aria-label="Equals">=</button>
+      <footer class="landing__footer">
+        <div class="control-strip">
+          <span><kbd>WASD</kbd> MOVE</span>
+          <span><kbd>SHIFT</kbd> SPRINT / BOOST</span>
+          <span><kbd>F</kbd> ENTER VEHICLE</span>
+          <span><kbd>MOUSE</kbd> AIM</span>
+          <span><kbd>T</kbd> CHAT</span>
         </div>
-      </section>
+        <div class="build-tag">WEBGL 2 // THREE.JS // PEER LINK</div>
+      </footer>
+    </section>
 
-      <aside class="history" aria-label="Calculation history">
-        <div class="history__header">
-          <h2>History</h2>
-          <button type="button" class="history__clear" id="clearHistory">Clear</button>
+    <section id="hud" class="hud hidden" aria-label="Game HUD">
+      <div class="hud__top-left">
+        <div class="district-tag">
+          <span class="district-tag__live"><i></i> LIVE</span>
+          <span>NEON GRID // SECTOR 07</span>
+          <span id="hudClock" class="district-tag__clock">23:47</span>
         </div>
-        <ul class="history__list" id="historyList"></ul>
-        <p class="history__hint">
-          Tip: numbers, operators, Enter and Backspace all work from your keyboard. Click any result to
-          reuse it.
-        </p>
-      </aside>
-    </main>
+        <div class="mission-card">
+          <div class="mission-card__head">
+            <span id="missionEyebrow">ACTIVE CONTRACT</span>
+            <span id="missionTimer">00:00</span>
+          </div>
+          <h2 id="missionTitle">GHOST PROTOCOL</h2>
+          <p id="missionObjective">Locate and breach the three data caches.</p>
+          <div class="mission-progress">
+            <div id="missionDots" class="mission-dots"><span></span><span></span><span></span></div>
+            <span id="missionDistance" class="mission-distance">— M</span>
+          </div>
+          <div class="mission-score"><span>CONTRACT SCORE</span><strong id="scoreValue">0</strong></div>
+        </div>
+      </div>
 
-    <script src="app.js"></script>
+      <div class="hud__top-center">
+        <div id="alertBadge" class="alert-badge"><i></i><span>SECURITY SWEEP</span><b id="alertCount">0</b></div>
+        <div id="missionBanner" class="mission-banner">
+          <span class="mission-banner__tag">NEW CONTRACT</span>
+          <strong>GHOST PROTOCOL</strong>
+          <small>SECURE THREE DATA CACHES</small>
+        </div>
+      </div>
+
+      <div class="hud__top-right">
+        <div class="room-pill">
+          <div class="room-pill__left">
+            <span>ROOM</span>
+            <strong id="roomCode">SOLO</strong>
+          </div>
+          <button id="copyInviteBtn" class="room-pill__copy" type="button" title="Copy invite link">COPY LINK</button>
+        </div>
+        <div class="map-panel">
+          <div class="map-panel__head">
+            <span>DISTRICT MAP</span>
+            <span id="networkLatency">LOCAL</span>
+          </div>
+          <div class="minimap-wrap">
+            <canvas id="minimap" width="440" height="440"></canvas>
+            <div class="minimap-ring"></div>
+            <div class="minimap-north">N</div>
+          </div>
+          <div id="playerList" class="player-list"></div>
+        </div>
+      </div>
+
+      <div id="worldLabels" class="world-labels" aria-hidden="true"></div>
+      <div id="crosshair" class="crosshair">
+        <i class="crosshair__dot"></i>
+        <i class="crosshair__arm crosshair__arm--t"></i>
+        <i class="crosshair__arm crosshair__arm--r"></i>
+        <i class="crosshair__arm crosshair__arm--b"></i>
+        <i class="crosshair__arm crosshair__arm--l"></i>
+        <i class="crosshair__hit"></i>
+      </div>
+
+      <div id="interactionPrompt" class="interaction hidden"><kbd>F</kbd><span id="interactionText">ENTER VEHICLE</span></div>
+      <div id="objectiveCompass" class="objective-compass hidden"><span class="objective-compass__arrow"></span><span id="compassDistance">— M</span></div>
+
+      <div class="hud__bottom-left">
+        <div id="feed" class="feed" aria-live="polite"></div>
+        <div class="vitals">
+          <div class="vitals__identity">
+            <span class="vitals__avatar" id="vitalsAvatar">G</span>
+            <div><strong id="vitalsName">GHOST</strong><small id="vitalsState">ON FOOT</small></div>
+          </div>
+          <div class="bar-group">
+            <div class="bar-row">
+              <span>HEALTH</span><b id="healthText">100</b>
+              <div class="bar bar--health"><i id="healthBar"></i></div>
+            </div>
+            <div class="bar-row">
+              <span>STAMINA</span><b id="staminaText">100</b>
+              <div class="bar bar--stamina"><i id="staminaBar"></i></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hud__bottom-center">
+        <div id="vehiclePrompt" class="vehicle-hint hidden">F — EXIT VEHICLE&nbsp;&nbsp;·&nbsp;&nbsp;SPACE — HANDBRAKE&nbsp;&nbsp;·&nbsp;&nbsp;SHIFT — BOOST</div>
+      </div>
+
+      <div class="hud__bottom-right">
+        <div id="speedometer" class="speedometer hidden">
+          <canvas id="speedoCanvas" width="440" height="300"></canvas>
+          <div class="speedometer__digits">
+            <strong id="speedValue">0</strong>
+            <span>KM/H</span>
+            <div class="speedometer__gear"><b id="gearValue">D</b><span>GEAR</span></div>
+          </div>
+          <div class="speedometer__boost"><span>BOOST</span><div class="boost-track"><i id="boostBar"></i></div></div>
+        </div>
+        <div id="weaponPanel" class="weapon-panel">
+          <div class="weapon-panel__name">ARC-9 <span>SUPPRESSED</span></div>
+          <div class="weapon-panel__ammo"><strong id="ammoValue">12</strong><span>/ 12</span></div>
+          <div class="weapon-panel__reload"><i id="reloadBar"></i></div>
+        </div>
+      </div>
+
+      <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+      <div id="damageFlash" class="damage-flash"></div>
+      <div id="speedLines" class="speed-lines"></div>
+
+      <div id="chatPanel" class="chat-panel hidden">
+        <span class="chat-panel__label">DISTRICT COMMS</span>
+        <input id="chatInput" maxlength="120" autocomplete="off" spellcheck="false" placeholder="Send a message to your partner…" />
+        <kbd>ENTER</kbd>
+      </div>
+      <div id="lockHint" class="lock-hint hidden"><span>CLICK TO TAKE CONTROL</span></div>
+    </section>
+
+    <div id="pauseOverlay" class="overlay hidden">
+      <div class="overlay-panel pause-panel">
+        <div class="eyebrow"><span class="eyebrow__line"></span> SYSTEM PAUSED</div>
+        <h2>NIGHTFALL</h2>
+        <p class="pause-panel__sub">The city keeps moving without you.</p>
+        <button id="resumeBtn" class="action-btn action-btn--primary" type="button">
+          <span class="action-btn__body"><strong>RESUME CONTRACT</strong><small>Click to lock the mouse</small></span>
+          <span class="action-btn__arrow">→</span>
+        </button>
+        <div class="settings-grid">
+          <div class="setting">
+            <span>GRAPHICS</span>
+            <div class="segmented" id="qualityGroup">
+              <button type="button" data-quality="performance">PERF</button>
+              <button type="button" data-quality="balanced">BALANCED</button>
+              <button type="button" data-quality="cinematic">CINEMA</button>
+            </div>
+          </div>
+          <div class="setting">
+            <span>LOOK SENSITIVITY</span>
+            <input id="sensitivity" type="range" min="0.5" max="2" step="0.05" value="1" />
+          </div>
+          <div class="setting">
+            <span>AUDIO</span>
+            <button id="muteBtn" class="mini-btn" type="button">SOUND ON</button>
+          </div>
+        </div>
+        <div class="pause-panel__controls">
+          <span><kbd>WASD</kbd> MOVE</span><span><kbd>MOUSE</kbd> LOOK</span><span><kbd>LMB</kbd> FIRE</span>
+          <span><kbd>RMB</kbd> AIM</span><span><kbd>F</kbd> VEHICLE</span><span><kbd>E</kbd> INTERACT</span>
+          <span><kbd>SPACE</kbd> JUMP / BRAKE</span><span><kbd>Q</kbd> PING</span><span><kbd>T</kbd> CHAT</span>
+        </div>
+        <button id="leaveBtn" class="text-btn" type="button">LEAVE DISTRICT</button>
+      </div>
+    </div>
+
+    <div id="deathOverlay" class="overlay overlay--death hidden">
+      <div class="death-card">
+        <div class="death-card__code">SIGNAL LOST</div>
+        <h2>FLATLINED</h2>
+        <p>Security got a clean shot. Re-syncing your neural link…</p>
+        <div class="death-card__timer"><strong id="respawnTimer">3</strong><span>RESPAWN</span></div>
+      </div>
+    </div>
+
+    <div id="resultOverlay" class="overlay hidden">
+      <div class="result-card">
+        <div class="eyebrow"><span class="eyebrow__line"></span> CONTRACT COMPLETE</div>
+        <h2>GHOST<br />PROTOCOL</h2>
+        <p id="resultSub">The caches are clean. The district never saw you.</p>
+        <div class="result-stats">
+          <div><span>CACHES</span><strong id="resultCaches">3 / 3</strong></div>
+          <div><span>TIME</span><strong id="resultTime">04:12</strong></div>
+          <div><span>SCORE</span><strong id="resultScore">8,500</strong></div>
+        </div>
+        <div class="result-next">New contract in <strong id="resultCountdown">12</strong>s</div>
+        <button id="redeployBtn" class="action-btn action-btn--primary" type="button">
+          <span class="action-btn__body"><strong>REDEPLOY NOW</strong><small>Run it again</small></span>
+          <span class="action-btn__arrow">→</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="controlsModal" class="overlay hidden">
+      <div class="overlay-panel controls-panel">
+        <div class="eyebrow"><span class="eyebrow__line"></span> FIELD MANUAL</div>
+        <h2>CONTROLS</h2>
+        <div class="controls-columns">
+          <div>
+            <h3>ON FOOT</h3>
+            <p><kbd>W A S D</kbd><span>Move</span></p>
+            <p><kbd>SHIFT</kbd><span>Sprint</span></p>
+            <p><kbd>SPACE</kbd><span>Jump</span></p>
+            <p><kbd>LMB</kbd><span>Fire ARC-9</span></p>
+            <p><kbd>RMB</kbd><span>Aim down sights</span></p>
+            <p><kbd>R</kbd><span>Reload</span></p>
+            <p><kbd>E / F</kbd><span>Interact / enter car</span></p>
+            <p><kbd>Q</kbd><span>Ping location</span></p>
+            <p><kbd>T</kbd><span>Chat</span></p>
+          </div>
+          <div>
+            <h3>BEHIND THE WHEEL</h3>
+            <p><kbd>W / S</kbd><span>Throttle / brake</span></p>
+            <p><kbd>A / D</kbd><span>Steer</span></p>
+            <p><kbd>SHIFT</kbd><span>Boost</span></p>
+            <p><kbd>SPACE</kbd><span>Handbrake drift</span></p>
+            <p><kbd>R</kbd><span>Reset car</span></p>
+            <p><kbd>F</kbd><span>Exit vehicle</span></p>
+            <p><kbd>ESC</kbd><span>Pause / release mouse</span></p>
+          </div>
+        </div>
+        <div class="controls-panel__note">
+          <strong>ONLINE:</strong> Host a city, copy the invite link, and send it over. Via the bundled
+          server you get a reliable relay; on static hosting the game falls back to an encrypted
+          peer-to-peer WebRTC link. Up to 4 operatives on the relay, 2 on P2P.
+        </div>
+        <button id="closeControlsBtn" class="action-btn action-btn--primary" type="button">
+          <span class="action-btn__body"><strong>BACK</strong><small>Return to the city</small></span>
+          <span class="action-btn__arrow">→</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="disconnectOverlay" class="overlay hidden">
+      <div class="overlay-panel disconnect-panel">
+        <div class="eyebrow"><span class="eyebrow__line"></span> CONNECTION LOST</div>
+        <h2>SIGNAL<br />SEVERED</h2>
+        <p id="disconnectReason">Your partner left the district.</p>
+        <button id="reloadBtn" class="action-btn action-btn--primary" type="button">
+          <span class="action-btn__body"><strong>RECONNECT</strong><small>Return to the title screen</small></span>
+          <span class="action-btn__arrow">→</span>
+        </button>
+      </div>
+    </div>
+
+    <noscript>This game needs JavaScript and WebGL 2 enabled.</noscript>
+    <script src="/dist/game.js"></script>
   </body>
 </html>

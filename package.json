@@ -1,0 +1,33 @@
+{
+  "name": "default-project",
+  "version": "1.0.0",
+  "description": "NIGHTFALL // NEON DISTRICT — a co-op open-world action and driving game for the browser.",
+  "main": "server.js",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --minify --format=iife --target=es2020 --outfile=dist/game.js --log-level=warning",
+    "dev": "esbuild src/main.js --bundle --format=iife --target=es2020 --outfile=dist/game.js --sourcemap --watch --log-level=warning",
+    "start": "node server.js",
+    "serve": "node server.js",
+    "test": "node --check server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noroblemo/calculator.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/noroblemo/calculator/issues"
+  },
+  "homepage": "https://github.com/noroblemo/calculator#readme",
+  "dependencies": {
+    "peerjs": "^1.5.5",
+    "three": "^0.187.0",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
