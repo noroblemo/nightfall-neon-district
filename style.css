@@ -1715,6 +1715,11 @@ kbd {
   box-shadow: 0 0 11px rgba(77, 244, 255, 0.3);
 }
 
+.bar--stamina i.is-low {
+  background: linear-gradient(90deg, #ffb44d, #ffe39a);
+  box-shadow: 0 0 11px rgba(255, 180, 77, 0.4);
+}
+
 .hud__bottom-center {
   position: absolute;
   bottom: 25px;

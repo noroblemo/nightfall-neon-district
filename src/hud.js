@@ -341,7 +341,10 @@ export class UI {
       bar.classList.toggle('is-low', h < 34);
     }
     const sb = $('staminaBar');
-    if (sb) sb.style.width = `${s}%`;
+    if (sb) {
+      sb.style.width = `${s}%`;
+      sb.classList.toggle('is-low', s < 20);
+    }
     setText($('healthText'), String(Math.round(h)));
     setText($('staminaText'), String(Math.round(s)));
   }

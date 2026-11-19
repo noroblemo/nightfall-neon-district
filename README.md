@@ -79,7 +79,7 @@ Any Node host works:
 | Input | Action |
 | --- | --- |
 | `W A S D` / arrows | Move / drive |
-| `Shift` | Sprint (foot) / Boost (car) |
+| `Shift` | Sprint on foot (uses stamina) / Boost in a car |
 | `Space` | Jump (foot) / Handbrake (car) |
 | `Mouse` | Aim; `LMB` fire |
 | `F` | Enter / exit vehicle |

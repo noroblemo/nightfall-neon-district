@@ -590,6 +590,7 @@ export class NightfallGame {
       alive: true,
       moveSpeed: 0,
       sprinting: false,
+      exhausted: false,
       ammo: MAG_SIZE,
       reserve: MAX_RESERVE,
       reloading: 0,
@@ -1006,12 +1007,22 @@ export class NightfallGame {
       }
     }
 
-    const wantsSprint = canControl && moving && !this.aiming
-      && (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) && p.stamina > 0.5;
+    const sprintHeld = canControl && moving && !this.aiming
+      && (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'));
+    // Once stamina is empty, lock sprint until a meaningful amount recovers.
+    // Without this the flag flips every frame at 0 stamina and the player
+    // stutters between walk and sprint speeds.
+    if (p.stamina <= 0.5 && !p.exhausted) {
+      p.exhausted = true;
+      this.ui.toast('Stamina spent — recover before sprinting again.', 'warn', 1900);
+    } else if (p.exhausted && p.stamina >= 30) {
+      p.exhausted = false;
+    }
+    const wantsSprint = sprintHeld && !p.exhausted && p.stamina > 0.5;
     p.sprinting = wantsSprint;
-    const speedTarget = this.aiming ? 3.1 : (wantsSprint ? 8.7 : 5.3);
-    if (wantsSprint) p.stamina = Math.max(0, p.stamina - 20 * dt);
-    else p.stamina = Math.min(100, p.stamina + 15 * dt);
+    const speedTarget = this.aiming ? 3.1 : (wantsSprint ? 10.2 : 5.3);
+    if (wantsSprint) p.stamina = Math.max(0, p.stamina - 14 * dt);
+    else p.stamina = Math.min(100, p.stamina + 20 * dt);
 
     const accel = p.grounded ? 13 : 5;
     p.moveSpeed = damp(p.moveSpeed, moving && canControl ? speedTarget : 0, accel, dt);
@@ -1468,7 +1479,7 @@ export class NightfallGame {
       this.camera.position.y + dir.y,
       this.camera.position.z + dir.z,
     );
-    const targetFov = this.aiming ? 46 : (p.sprinting ? 67 : 62);
+    const targetFov = this.aiming ? 46 : (p.sprinting ? 71 : 62);
     this.setCameraFov(targetFov, dt);
     if (this.localChar) {
       const camDistance = this.camera.position.distanceTo(p.pos);
@@ -2258,6 +2269,8 @@ export class NightfallGame {
     p.alive = true;
     p.health = 100;
     p.stamina = 100;
+    p.exhausted = false;
+    p.sprinting = false;
     p.ammo = MAG_SIZE;
     p.reserve = MAX_RESERVE;
     p.reloading = 0;
