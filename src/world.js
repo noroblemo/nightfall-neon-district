@@ -30,6 +30,97 @@ const ROAD_LINES = [-210, -150, -90, -30, 30, 90, 150, 210];
 const NEON = [0x38f5ff, 0xff2d95, 0xa86bff, 0xffb44d, 0x6bffb8];
 const STREET_NAMES = ['KANTO', 'ORBITAL', 'AURORA', 'HELIX', 'ECHO', 'VANTA', 'NEXUS', 'CHROME'];
 
+// Selectable weather. Each preset drives fog, sky tint, precipitation,
+// starlight and ambient light levels; transitions are smoothed in update().
+export const WEATHERS = [
+  {
+    id: 'rain',
+    label: 'RAIN',
+    tagline: 'NEON RAIN',
+    fogColor: 0x070b16,
+    fogDensity: 0.0042,
+    sky: ['#02040a', '#0a0d20', '#241a3d', '#432260'],
+    rain: 1,
+    snow: 0,
+    stars: 0.85,
+    moon: 0.95,
+    hemi: 0.85,
+    moonlight: 1.15,
+    lightning: false,
+  },
+  {
+    id: 'clear',
+    label: 'CLEAR',
+    tagline: 'CLEAR SKIES',
+    fogColor: 0x0a1224,
+    fogDensity: 0.0021,
+    sky: ['#01030b', '#071228', '#1c2f55', '#314a78'],
+    rain: 0,
+    snow: 0,
+    stars: 1,
+    moon: 1,
+    hemi: 1.05,
+    moonlight: 1.4,
+    lightning: false,
+  },
+  {
+    id: 'fog',
+    label: 'FOG',
+    tagline: 'DENSE FOG',
+    fogColor: 0x121a28,
+    fogDensity: 0.0125,
+    sky: ['#05070e', '#0d1320', '#242c3c', '#39435a'],
+    rain: 0.1,
+    snow: 0,
+    stars: 0.08,
+    moon: 0.3,
+    hemi: 0.7,
+    moonlight: 0.7,
+    lightning: false,
+  },
+  {
+    id: 'storm',
+    label: 'STORM',
+    tagline: 'ELECTRIC STORM',
+    fogColor: 0x05070f,
+    fogDensity: 0.0072,
+    sky: ['#010208', '#05070f', '#111521', '#1c2333'],
+    rain: 1.7,
+    snow: 0,
+    stars: 0.04,
+    moon: 0.18,
+    hemi: 0.55,
+    moonlight: 0.55,
+    lightning: true,
+  },
+  {
+    id: 'snow',
+    label: 'SNOW',
+    tagline: 'SILENT SNOW',
+    fogColor: 0x0b1220,
+    fogDensity: 0.0058,
+    sky: ['#02040c', '#0b1226', '#28324c', '#465270'],
+    rain: 0,
+    snow: 1,
+    stars: 0.35,
+    moon: 0.7,
+    hemi: 0.9,
+    moonlight: 1.2,
+    lightning: false,
+  },
+];
+
+for (const preset of WEATHERS) {
+  preset.skyColors = preset.sky.map((hex) => new THREE.Color(hex));
+  preset.fogTint = new THREE.Color(preset.fogColor);
+}
+
+const WEATHER_BY_ID = new Map(WEATHERS.map((preset) => [preset.id, preset]));
+
+export function getWeather(id) {
+  return WEATHER_BY_ID.get(id) || WEATHERS[0];
+}
+
 function buildSky(scene) {
   const skyGeo = new THREE.SphereGeometry(620, 32, 20);
   const skyMat = new THREE.ShaderMaterial({
@@ -40,6 +131,7 @@ function buildSky(scene) {
       midColor: { value: new THREE.Color('#0a0d20') },
       horizonColor: { value: new THREE.Color('#241a3d') },
       glowColor: { value: new THREE.Color('#432260') },
+      uFlash: { value: 0 },
     },
     vertexShader: `
       varying vec3 vWorld;
@@ -55,6 +147,7 @@ function buildSky(scene) {
       uniform vec3 midColor;
       uniform vec3 horizonColor;
       uniform vec3 glowColor;
+      uniform float uFlash;
       void main() {
         float h = clamp(vWorld.y, 0.0, 1.0);
         vec3 col = mix(horizonColor, midColor, smoothstep(0.0, 0.28, h));
@@ -63,6 +156,7 @@ function buildSky(scene) {
         col += glowColor * haze * 0.65;
         float band = sin(vWorld.y * 38.0 + vWorld.x * 5.0) * 0.004 * (1.0 - h);
         col += band;
+        col += vec3(0.5, 0.62, 0.9) * uFlash * (0.3 + 0.7 * (1.0 - h));
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -132,6 +226,7 @@ function buildSky(scene) {
   moonCore.position.set(246, 261, -331);
   moonCore.lookAt(0, 0, 0);
   scene.add(moonCore);
+  return { skyMat, stars, moon, moonCore };
 }
 
 function scaleBoxUV(geo, w, h, d, uScale = 15, vScale = 30) {
@@ -210,7 +305,7 @@ export function createWorld(scene, renderer) {
   warmLight.position.set(-58, 6, -58);
   scene.add(warmLight);
 
-  buildSky(scene);
+  const sky = buildSky(scene);
 
   // Environment reflection map for wet streets and car paint.
   try {
@@ -1169,6 +1264,7 @@ export function createWorld(scene, renderer) {
     blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: { value: 0 },
+      uAlpha: { value: 1 },
     },
     vertexShader: `
       attribute float aSpeed;
@@ -1184,14 +1280,66 @@ export function createWorld(scene, renderer) {
     `,
     fragmentShader: `
       varying float vAlpha;
+      uniform float uAlpha;
       void main() {
-        gl_FragColor = vec4(0.57, 0.75, 0.95, 0.30 * vAlpha);
+        gl_FragColor = vec4(0.57, 0.75, 0.95, 0.30 * vAlpha * uAlpha);
       }
     `,
   });
   const rain = new THREE.LineSegments(rainGeo, rainMat);
   rain.frustumCulled = false;
   scene.add(rain);
+
+  // Snow field -----------------------------------------------------------
+  const snowCount = 900;
+  const snowPos = new Float32Array(snowCount * 3);
+  const snowSpeed = new Float32Array(snowCount);
+  for (let i = 0; i < snowCount; i += 1) {
+    snowPos[i * 3] = (rng() - 0.5) * 88;
+    snowPos[i * 3 + 1] = rng() * 30;
+    snowPos[i * 3 + 2] = (rng() - 0.5) * 88;
+    snowSpeed[i] = 1.1 + rng() * 2.1;
+  }
+  const snowGeo = new THREE.BufferGeometry();
+  snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
+  snowGeo.setAttribute('aSpeed', new THREE.BufferAttribute(snowSpeed, 1));
+  const snowMat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.NormalBlending,
+    uniforms: {
+      uTime: { value: 0 },
+      uAlpha: { value: 0 },
+    },
+    vertexShader: `
+      attribute float aSpeed;
+      uniform float uTime;
+      varying float vAlpha;
+      void main() {
+        vec3 p = position;
+        p.y = mod(p.y - uTime * aSpeed, 30.0);
+        p.x += sin(uTime * 0.5 + p.z * 0.15 + p.y * 0.4) * 1.1;
+        p.z += cos(uTime * 0.35 + p.x * 0.12) * 0.6;
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_PointSize = clamp(110.0 / max(1.0, -mv.z), 1.0, 5.5);
+        vAlpha = smoothstep(0.0, 3.0, p.y) * (1.0 - smoothstep(24.0, 30.0, p.y));
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      uniform float uAlpha;
+      varying float vAlpha;
+      void main() {
+        float d = length(gl_PointCoord - vec2(0.5));
+        float a = smoothstep(0.5, 0.12, d) * vAlpha * uAlpha * 0.9;
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(0.86, 0.92, 1.0, a);
+      }
+    `,
+  });
+  const snow = new THREE.Points(snowGeo, snowMat);
+  snow.frustumCulled = false;
+  scene.add(snow);
 
   // Open mission sites on sidewalks ------------------------------------
   const siteCandidates = [];
@@ -1284,6 +1432,50 @@ export function createWorld(scene, renderer) {
   extractionGroup.visible = false;
   scene.add(extractionGroup);
 
+  // Weather system -------------------------------------------------------
+  const weather = {
+    kind: 'rain',
+    preset: getWeather('rain'),
+    rainAmount: 1,
+    snowAmount: 0,
+    stars: 0.85,
+    moon: 0.95,
+    hemi: 0.85,
+    moonlight: 1.15,
+    flash: 0,
+    nextStrike: 4 + Math.random() * 6,
+  };
+
+  function setWeather(id, instant = false) {
+    const preset = getWeather(id);
+    weather.kind = preset.id;
+    weather.preset = preset;
+    if (instant) {
+      weather.rainAmount = preset.rain;
+      weather.snowAmount = preset.snow;
+      weather.stars = preset.stars;
+      weather.moon = preset.moon;
+      weather.hemi = preset.hemi;
+      weather.moonlight = preset.moonlight;
+      weather.flash = 0;
+      weather.nextStrike = 4 + Math.random() * 6;
+      scene.fog.density = preset.fogDensity;
+      scene.fog.color.copy(preset.fogTint);
+      sky.skyMat.uniforms.topColor.value.copy(preset.skyColors[0]);
+      sky.skyMat.uniforms.midColor.value.copy(preset.skyColors[1]);
+      sky.skyMat.uniforms.horizonColor.value.copy(preset.skyColors[2]);
+      sky.skyMat.uniforms.glowColor.value.copy(preset.skyColors[3]);
+      sky.stars.material.opacity = clamp(preset.stars * 0.9, 0.02, 1);
+      sky.moon.material.opacity = clamp(preset.moon, 0.05, 1);
+      sky.moonCore.material.opacity = clamp(preset.moon * 0.95, 0.05, 1);
+      hemi.intensity = preset.hemi;
+      moonLight.intensity = preset.moonlight;
+      rainMat.uniforms.uAlpha.value = preset.rain;
+      snowMat.uniforms.uAlpha.value = preset.snow;
+    }
+    return preset;
+  }
+
   const state = {
     colliders,
     shardSites,
@@ -1300,7 +1492,13 @@ export function createWorld(scene, renderer) {
     searchlights,
     rain,
     rainMat,
+    snow,
+    snowMat,
     dummy,
+    weather,
+    weatherList: WEATHERS,
+    setWeather,
+    getWeatherPreset: getWeather,
     elapsed: 0,
     quality: 1,
     low: false,
@@ -1309,10 +1507,48 @@ export function createWorld(scene, renderer) {
 
   function update(dt, elapsed, playerPos, cameraPos) {
     state.elapsed = elapsed;
+    // Weather transition -------------------------------------------------
+    const preset = weather.preset;
+    const blend = 1 - Math.exp(-1.6 * dt);
+    weather.rainAmount += (preset.rain - weather.rainAmount) * blend;
+    weather.snowAmount += (preset.snow - weather.snowAmount) * blend;
+    weather.stars += (preset.stars - weather.stars) * blend;
+    weather.moon += (preset.moon - weather.moon) * blend;
+    weather.hemi += (preset.hemi - weather.hemi) * blend;
+    weather.moonlight += (preset.moonlight - weather.moonlight) * blend;
+    scene.fog.density += (preset.fogDensity - scene.fog.density) * blend;
+    scene.fog.color.lerp(preset.fogTint, blend);
+    sky.skyMat.uniforms.topColor.value.lerp(preset.skyColors[0], blend);
+    sky.skyMat.uniforms.midColor.value.lerp(preset.skyColors[1], blend);
+    sky.skyMat.uniforms.horizonColor.value.lerp(preset.skyColors[2], blend);
+    sky.skyMat.uniforms.glowColor.value.lerp(preset.skyColors[3], blend);
+    sky.stars.material.opacity = clamp(weather.stars * 0.9, 0.02, 1);
+    sky.moon.material.opacity = clamp(weather.moon, 0.05, 1);
+    sky.moonCore.material.opacity = clamp(weather.moon * 0.95, 0.05, 1);
+
+    if (preset.lightning) {
+      weather.nextStrike -= dt;
+      if (weather.nextStrike <= 0) {
+        weather.flash = 1;
+        weather.nextStrike = 3.5 + Math.random() * 7;
+      }
+    }
+    weather.flash = Math.max(0, weather.flash - dt * 2.6);
+    const flicker = weather.flash * (0.55 + 0.45 * Math.sin(elapsed * 47));
+    hemi.intensity = weather.hemi + flicker * 0.9;
+    moonLight.intensity = weather.moonlight + flicker * 1.8;
+    sky.skyMat.uniforms.uFlash.value = flicker;
+
     rainMat.uniforms.uTime.value = elapsed;
+    rainMat.uniforms.uAlpha.value = weather.rainAmount;
     rain.position.x = playerPos.x;
     rain.position.z = playerPos.z;
-    rain.visible = !!state.quality;
+    rain.visible = !!state.quality && weather.rainAmount > 0.02;
+    snowMat.uniforms.uTime.value = elapsed;
+    snowMat.uniforms.uAlpha.value = weather.snowAmount;
+    snow.position.x = playerPos.x;
+    snow.position.z = playerPos.z;
+    snow.visible = !!state.quality && weather.snowAmount > 0.02;
     const intensity = state.low ? 0.55 : 1;
     lampGlow.material.opacity = 0.6 * intensity;
     searchlights.children.forEach((beam, i) => {

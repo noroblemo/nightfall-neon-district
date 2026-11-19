@@ -282,9 +282,13 @@ export class UI {
 
   setMission(state, distance) {
     if (!state) return;
-    let title = 'GHOST PROTOCOL';
-    let objective = 'Locate and breach the three data caches.';
-    let eyebrow = 'ACTIVE CONTRACT';
+    const contractName = state.contractName || 'GHOST PROTOCOL';
+    const cacheCount = state.shards?.length || 3;
+    let title = contractName;
+    let objective = `Breach ${cacheCount} data caches across the district.`;
+    let eyebrow = state.contractTotal
+      ? `CONTRACT ${String((state.contractIndex || 0) + 1).padStart(2, '0')}/${String(state.contractTotal).padStart(2, '0')}`
+      : 'ACTIVE CONTRACT';
     if (state.phase === 'extract') {
       objective = 'All caches secured. Return to the plaza for extraction.';
       eyebrow = 'EXTRACTION READY';
@@ -306,12 +310,26 @@ export class UI {
     setText($('scoreValue'), formatNumber(state.score || 0));
     const dots = $('missionDots')?.children;
     if (dots) {
+      if (dots.length !== cacheCount) {
+        const wrap = $('missionDots');
+        wrap.replaceChildren();
+        for (let i = 0; i < cacheCount; i += 1) wrap.appendChild(document.createElement('span'));
+      }
       const collected = state.shards?.filter((s) => s.collected).length || 0;
-      for (let i = 0; i < dots.length; i += 1) {
-        dots[i].classList.toggle('done', i < collected);
-        dots[i].classList.toggle('next', i === collected && state.phase === 'collect');
+      const liveDots = $('missionDots').children;
+      for (let i = 0; i < liveDots.length; i += 1) {
+        liveDots[i].classList.toggle('done', i < collected);
+        liveDots[i].classList.toggle('next', i === collected && state.phase === 'collect');
       }
     }
+  }
+
+  setWeather(label, tagline) {
+    const el = $('weatherTag');
+    if (!el) return;
+    setText(el, label || 'RAIN');
+    el.dataset.weather = String(label || 'rain').toLowerCase();
+    if (tagline) el.title = tagline;
   }
 
   setVitals(health, stamina) {
@@ -735,12 +753,13 @@ export class UI {
     this.deathOverlay?.classList.add('hidden');
   }
 
-  showResult({ time, score, countdown, caches }) {
+  showResult({ time, score, countdown, caches, contractName }) {
     this.resultOverlay?.classList.remove('hidden');
     setText($('resultTime'), formatTime(time));
     setText($('resultScore'), formatNumber(score));
-    setText($('resultCaches'), `${caches} / 3`);
+    setText($('resultCaches'), `${caches} SECURED`);
     setText($('resultCountdown'), String(Math.max(0, Math.ceil(countdown))));
+    if (contractName) setText($('resultName'), contractName);
   }
 
   updateResultCountdown(seconds) {

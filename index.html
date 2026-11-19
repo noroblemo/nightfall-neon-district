@@ -58,8 +58,8 @@
             <span class="game-title__top">NIGHT</span><span class="game-title__bottom">FALL</span>
           </h1>
           <p class="hero__lede">
-            The grid is awake. Breach three data caches with your partner, shake the security swarm,
-            and disappear into the neon. Or just steal a supercar and drive until the city runs out.
+            The grid is awake. Work through a ladder of heist contracts with your partner, shake the
+            security swarm, and disappear into the neon. Or just steal a supercar and drive until the city runs out.
           </p>
 
           <div class="menu-card">
@@ -72,7 +72,7 @@
               <span class="action-btn__index">01</span>
               <span class="action-btn__body">
                 <strong>HOST THE CITY</strong>
-                <small>Create a room and send your cousin the code</small>
+                <small>Create a room and share the code with a friend</small>
               </span>
               <span class="action-btn__arrow">→</span>
             </button>
@@ -105,7 +105,7 @@
         <aside class="side-panel">
           <div class="side-panel__eyebrow">DISTRICT BRIEF // 01</div>
           <h2>THE GHOST<br />PROTOCOL</h2>
-          <p>Three encrypted caches. One extraction gate. Every drone in the district is looking for you.</p>
+          <p>Six escalating contracts. Rotating caches. One extraction gate. Every drone in the district is looking for you.</p>
           <ul class="brief-list">
             <li><span>01</span> Breach the caches hidden across the neon grid.</li>
             <li><span>02</span> Use the swarm response to your advantage — split up.</li>
@@ -113,7 +113,7 @@
           </ul>
           <div class="street-readout">
             <div><span>DISTRICT</span><strong>NEON GRID / 07</strong></div>
-            <div><span>CONDITIONS</span><strong>RAIN / 23:47</strong></div>
+            <div><span>CONDITIONS</span><strong>RAIN / CLEAR / FOG / STORM / SNOW</strong></div>
             <div><span>TRAFFIC</span><strong>LIVE</strong></div>
           </div>
         </aside>
@@ -125,6 +125,7 @@
           <span><kbd>SHIFT</kbd> SPRINT / BOOST</span>
           <span><kbd>F</kbd> ENTER VEHICLE</span>
           <span><kbd>MOUSE</kbd> AIM</span>
+          <span><kbd>V</kbd> WEATHER</span>
           <span><kbd>T</kbd> CHAT</span>
         </div>
         <div class="build-tag">WEBGL 2 // THREE.JS // PEER LINK</div>
@@ -136,6 +137,7 @@
         <div class="district-tag">
           <span class="district-tag__live"><i></i> LIVE</span>
           <span>NEON GRID // SECTOR 07</span>
+          <span id="weatherTag" class="district-tag__weather" data-weather="rain">RAIN</span>
           <span id="hudClock" class="district-tag__clock">23:47</span>
         </div>
         <div class="mission-card">
@@ -144,7 +146,7 @@
             <span id="missionTimer">00:00</span>
           </div>
           <h2 id="missionTitle">GHOST PROTOCOL</h2>
-          <p id="missionObjective">Locate and breach the three data caches.</p>
+          <p id="missionObjective">Locate and breach the data caches.</p>
           <div class="mission-progress">
             <div id="missionDots" class="mission-dots"><span></span><span></span><span></span></div>
             <span id="missionDistance" class="mission-distance">— M</span>
@@ -298,10 +300,10 @@
     <div id="resultOverlay" class="overlay hidden">
       <div class="result-card">
         <div class="eyebrow"><span class="eyebrow__line"></span> CONTRACT COMPLETE</div>
-        <h2>GHOST<br />PROTOCOL</h2>
+        <h2 id="resultName">GHOST<br />PROTOCOL</h2>
         <p id="resultSub">The caches are clean. The district never saw you.</p>
         <div class="result-stats">
-          <div><span>CACHES</span><strong id="resultCaches">3 / 3</strong></div>
+          <div><span>CACHES</span><strong id="resultCaches">3 SECURED</strong></div>
           <div><span>TIME</span><strong id="resultTime">04:12</strong></div>
           <div><span>SCORE</span><strong id="resultScore">8,500</strong></div>
         </div>
@@ -328,6 +330,7 @@
             <p><kbd>R</kbd><span>Reload</span></p>
             <p><kbd>E / F</kbd><span>Interact / enter car</span></p>
             <p><kbd>Q</kbd><span>Ping location</span></p>
+            <p><kbd>V</kbd><span>Cycle weather</span></p>
             <p><kbd>T</kbd><span>Chat</span></p>
           </div>
           <div>

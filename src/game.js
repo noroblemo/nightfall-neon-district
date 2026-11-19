@@ -30,6 +30,65 @@ const MAG_SIZE = 12;
 const MAX_RESERVE = 120;
 const PLAZA_SAFE_RADIUS = 30;
 
+// Contract ladder. Every contract reuses the same sandbox but changes the
+// cache count, security density, extraction hold and payout.
+const CONTRACTS = [
+  {
+    name: 'GHOST PROTOCOL',
+    tag: 'SECURE THREE DATA CACHES',
+    caches: 3,
+    guardBudget: 3,
+    droneBudget: 3,
+    extractSeconds: 8,
+    bonus: 3000,
+  },
+  {
+    name: 'BLACKOUT RUN',
+    tag: 'CUT THE GRID NODES',
+    caches: 3,
+    guardBudget: 3,
+    droneBudget: 4,
+    extractSeconds: 9,
+    bonus: 3300,
+  },
+  {
+    name: 'CROWN HEIST',
+    tag: 'LIFT FOUR EXECUTIVE CACHES',
+    caches: 4,
+    guardBudget: 4,
+    droneBudget: 4,
+    extractSeconds: 10,
+    bonus: 3700,
+  },
+  {
+    name: 'SILENT AUCTION',
+    tag: 'RAID THE NIGHT MARKET',
+    caches: 4,
+    guardBudget: 4,
+    droneBudget: 5,
+    extractSeconds: 10,
+    bonus: 4000,
+  },
+  {
+    name: 'ZERO HOUR',
+    tag: 'BEAT THE SECURITY SWEEP',
+    caches: 5,
+    guardBudget: 5,
+    droneBudget: 6,
+    extractSeconds: 11,
+    bonus: 4400,
+  },
+  {
+    name: 'LAST SIGNAL',
+    tag: 'PULL EVERY CACHE OFFLINE',
+    caches: 5,
+    guardBudget: 5,
+    droneBudget: 7,
+    extractSeconds: 12,
+    bonus: 4800,
+  },
+];
+
 const tempVec = new THREE.Vector3();
 const tempVec2 = new THREE.Vector3();
 const tempVec3 = new THREE.Vector3();
@@ -440,9 +499,10 @@ export class NightfallGame {
     this.ui.setBoost(1, false);
     this.ui.initMinimap(this.world);
     this.ui.setInteraction('', false);
+    this.ui.setWeather(this.weatherLabel(), this.world.getWeatherPreset(this.world.weather.kind)?.tagline);
     this.ui.showMissionBanner(
       'GHOST PROTOCOL',
-      this.isHost ? 'SECURE THREE DATA CACHES' : 'SYNCING WITH HOST',
+      this.isHost ? 'SECURE THE DATA CACHES' : 'SYNCING WITH HOST',
       this.isHost ? 'NEW CONTRACT' : 'CO-OP LINK',
       4600,
     );
@@ -484,7 +544,7 @@ export class NightfallGame {
         this.ui.feed('Linked to the host city.', 'ok', 'LINK');
       }
     } else {
-      this.ui.feed('Solo patrol engaged. Three caches are live in the district.', 'ok', 'CONTRACT');
+      this.ui.feed('Solo patrol engaged. Contract ladder is live in the district.', 'ok', 'CONTRACT');
     }
     this.ui.toast('Click the city to take control.', 'info', 3600);
     this.ui.setLockHint(true);
@@ -573,24 +633,27 @@ export class NightfallGame {
 
   startMission() {
     this.missionCount += 1;
+    const contractDef = CONTRACTS[(this.missionCount - 1) % CONTRACTS.length];
+    const stage = ((this.missionCount - 1) % CONTRACTS.length) + 1;
     const sites = this.world.shardSites;
+    const targetCaches = Math.min(contractDef.caches, sites.length);
     const chosen = [];
     const rotation = (this.missionCount * 2) % Math.max(1, sites.length);
-    for (let i = 0; i < sites.length && chosen.length < 3; i += 1) {
+    for (let i = 0; i < sites.length && chosen.length < targetCaches; i += 1) {
       const site = sites[(i + rotation) % sites.length];
       if (chosen.every((c) => dist2D(c.x, c.z, site.x, site.z) > 32)) chosen.push(site);
     }
     for (const site of sites) {
-      if (chosen.length >= 3) break;
+      if (chosen.length >= targetCaches) break;
       if (!chosen.includes(site)) chosen.push(site);
     }
-    while (chosen.length < 3) {
+    while (chosen.length < targetCaches) {
       chosen.push({ x: -40 + chosen.length * 38, z: 40, name: 'NIGHT MARKET' });
     }
 
     this.mission = {
       phase: 'collect',
-      shards: chosen.slice(0, 3).map((site, index) => ({
+      shards: chosen.slice(0, targetCaches).map((site, index) => ({
         id: `shard-${this.missionCount}-${index}`,
         x: site.x,
         z: site.z,
@@ -601,10 +664,17 @@ export class NightfallGame {
       score: 0,
       extraction: { x: this.world.extraction.x, z: this.world.extraction.z },
       extractProgress: 0,
-      extractSeconds: 8,
+      extractSeconds: contractDef.extractSeconds,
       allInside: false,
       completeIn: 0,
       contract: this.missionCount,
+      contractName: contractDef.name,
+      contractTag: contractDef.tag,
+      contractIndex: stage - 1,
+      contractTotal: CONTRACTS.length,
+      scoreBonus: contractDef.bonus,
+      guardBudget: contractDef.guardBudget,
+      droneBudget: contractDef.droneBudget,
     };
     this.completed = false;
     this.resultTimer = 0;
@@ -615,8 +685,12 @@ export class NightfallGame {
     if (this.isHost) this.spawnLocalEnemies();
     this.world.extractionGroup.visible = false;
     this.ui.hideResult();
-    this.ui.showMissionBanner('GHOST PROTOCOL', 'SECURE THREE DATA CACHES', 'NEW CONTRACT', 4400);
-    this.ui.feed(`Contract ${String(this.missionCount).padStart(2, '0')} live. Find the three caches.`, 'ok', 'CONTRACT');
+    this.ui.showMissionBanner(contractDef.name, contractDef.tag, 'NEW CONTRACT', 4400);
+    this.ui.feed(
+      `Contract ${stage}/${CONTRACTS.length} — ${contractDef.name}. ${targetCaches} caches live.`,
+      'ok',
+      'CONTRACT',
+    );
     if (this.session?.online && this.isHost) this.sendFullState(true);
   }
 
@@ -669,6 +743,9 @@ export class NightfallGame {
         break;
       case 'KeyQ':
         this.sendMapPing();
+        break;
+      case 'KeyV':
+        this.cycleWeather();
         break;
       case 'KeyM': {
         const muted = !this.audio.muted;
@@ -823,6 +900,38 @@ export class NightfallGame {
     if (this.pings.length > 8) this.pings.shift();
     this.audio.ping();
     this.ui.feed(`${(name || 'ALLY').toUpperCase()} marked a location.`, 'info', 'PING');
+  }
+
+  weatherLabel(id = this.world?.weather?.kind) {
+    const preset = this.world?.getWeatherPreset?.(id);
+    return preset?.label || String(id || 'RAIN').toUpperCase();
+  }
+
+  applyWeather(id, announce = false) {
+    if (!this.world?.setWeather) return;
+    const already = this.world.weather.kind === id;
+    const preset = this.world.setWeather(id, true);
+    this.ui.setWeather?.(preset.label, preset.tagline);
+    if (announce && !already) {
+      this.ui.toast(`Weather: ${preset.label}`, 'info', 2200);
+      this.ui.feed(`${preset.tagline} rolling over the district.`, 'info', 'WEATHER');
+    }
+  }
+
+  cycleWeather() {
+    const list = this.world?.weatherList || [];
+    if (!list.length) return;
+    const index = list.findIndex((item) => item.id === this.world.weather.kind);
+    const next = list[(index + 1) % list.length];
+    if (this.session?.online && !this.isHost) {
+      this.network?.send('weather-request', { weather: next.id, name: this.myName });
+      this.ui.toast(`Requested ${next.label.toLowerCase()} weather.`, 'info', 1800);
+      return;
+    }
+    this.applyWeather(next.id, true);
+    if (this.session?.online && this.isHost) {
+      this.network?.send('weather', { weather: next.id, by: this.session.selfId, name: this.myName });
+    }
   }
 
   jump() {
@@ -1558,8 +1667,11 @@ export class NightfallGame {
 
   completeMission() {
     if (!this.mission || this.isHost === false) return;
+    const contractName = this.mission.contractName || 'GHOST PROTOCOL';
+    const cacheCount = this.mission.shards?.length || 3;
     this.mission.phase = 'complete';
-    this.mission.score += 3000 + Math.round(Math.max(0, 1600 - this.mission.elapsed * 3));
+    this.mission.score += (this.mission.scoreBonus || 3000)
+      + Math.round(Math.max(0, 1600 - this.mission.elapsed * 3));
     this.mission.completeIn = 12;
     this.completed = true;
     this.resultTimer = 12;
@@ -1570,12 +1682,13 @@ export class NightfallGame {
     this.ui.setCrosshair(false);
     this.ui.setInteraction('', false);
     this.ui.hideDeath();
-    this.ui.showMissionBanner('CONTRACT COMPLETE', 'GHOST PROTOCOL SECURED', 'EXFIL', 4600);
+    this.ui.showMissionBanner('CONTRACT COMPLETE', `${contractName} SECURED`, 'EXFIL', 4600);
     this.ui.showResult({
       time: this.mission.elapsed,
       score: this.mission.score,
       countdown: this.mission.completeIn,
-      caches: 3,
+      caches: cacheCount,
+      contractName,
     });
     this.effects.explosion(
       new THREE.Vector3(this.world.extraction.x, 2, this.world.extraction.z),
@@ -1788,20 +1901,31 @@ export class NightfallGame {
     if (!this.isHost || !this.mission) return;
     this.clearEnemies();
     const sites = this.mission.shards;
-    sites.forEach((site, index) => {
-      const angle = (index / Math.max(1, sites.length)) * TAU + 0.7;
+    const guardBudget = Math.max(1, this.mission.guardBudget || sites.length);
+    const droneBudget = Math.max(1, this.mission.droneBudget || sites.length);
+    for (let i = 0; i < guardBudget; i += 1) {
+      const site = sites[i % sites.length];
+      const ring = Math.floor(i / sites.length);
+      const angle = (i / guardBudget) * TAU + 0.7 + ring * 1.4;
+      const radius = 4.2 + ring * 2.4;
       this.createGuard(
-        site.x + Math.cos(angle) * 4.2,
-        site.z + Math.sin(angle) * 4.2,
-        `guard-${this.mission.contract}-${index}`,
+        site.x + Math.cos(angle) * radius,
+        site.z + Math.sin(angle) * radius,
+        `guard-${this.mission.contract}-${i}`,
       );
+    }
+    for (let i = 0; i < droneBudget; i += 1) {
+      const site = sites[i % sites.length];
+      const ring = Math.floor(i / sites.length);
+      const angle = (i / droneBudget) * TAU - 0.5 + ring * 1.7;
+      const radius = 6.4 + ring * 2.2;
       this.createDrone(
-        site.x - Math.cos(angle) * 6.4,
-        site.z - Math.sin(angle) * 6.4,
-        `drone-${this.mission.contract}-${index}`,
-        index,
+        site.x - Math.cos(angle) * radius,
+        site.z - Math.sin(angle) * radius,
+        `drone-${this.mission.contract}-${i}`,
+        i,
       );
-    });
+    }
   }
 
   createGuard(x, z, id) {
@@ -2249,6 +2373,9 @@ export class NightfallGame {
   handleState(msg) {
     if (this.isHost || !msg || !msg.mission) return;
     if (msg.from && this.session?.hostId && msg.from !== this.session.hostId) return;
+    if (msg.weather && msg.weather !== this.world?.weather?.kind) {
+      this.applyWeather(msg.weather, true);
+    }
     const incoming = msg.mission;
     const previousContract = this.mission?.contract;
     const previousPhase = this.mission?.phase;
@@ -2262,6 +2389,7 @@ export class NightfallGame {
     this.syncRemoteEnemies(msg.enemies);
     this.alertCount = msg.alert ?? this.remoteAlertCount ?? 0;
     const phase = this.mission.phase;
+    const contractName = this.mission.contractName || 'GHOST PROTOCOL';
 
     if (phase === 'complete' && !this.completed) {
       this.completed = true;
@@ -2272,12 +2400,13 @@ export class NightfallGame {
       this.ui.setCrosshair(false);
       this.ui.setInteraction('', false);
       this.ui.hideDeath();
-      this.ui.showMissionBanner('CONTRACT COMPLETE', 'GHOST PROTOCOL SECURED', 'EXFIL', 4600);
+      this.ui.showMissionBanner('CONTRACT COMPLETE', `${contractName} SECURED`, 'EXFIL', 4600);
       this.ui.showResult({
         time: this.mission.elapsed,
         score: this.mission.score,
         countdown: this.mission.completeIn ?? 12,
-        caches: 3,
+        caches: this.mission.shards?.length || 3,
+        contractName,
       });
       if (document.pointerLockElement) document.exitPointerLock();
     } else if (phase !== 'complete' && this.completed) {
@@ -2291,10 +2420,20 @@ export class NightfallGame {
     }
 
     if (previousContract !== undefined && previousContract !== this.mission.contract) {
-      this.ui.showMissionBanner('GHOST PROTOCOL', 'SECURE THREE DATA CACHES', 'NEW CONTRACT', 4200);
-      this.ui.feed('New contract received. Three fresh caches are live.', 'ok', 'CONTRACT');
+      this.ui.showMissionBanner(
+        contractName,
+        this.mission.contractTag || 'SECURE THE DATA CACHES',
+        'NEW CONTRACT',
+        4200,
+      );
+      this.ui.feed(`New contract — ${contractName}. ${this.mission.shards?.length || 3} caches are live.`, 'ok', 'CONTRACT');
     } else if (previousContract === undefined && phase === 'collect') {
-      this.ui.showMissionBanner('GHOST PROTOCOL', 'SECURE THREE DATA CACHES', 'CO-OP CONTRACT', 4200);
+      this.ui.showMissionBanner(
+        contractName,
+        this.mission.contractTag || 'SECURE THE DATA CACHES',
+        'CO-OP CONTRACT',
+        4200,
+      );
     }
     if (previousPhase !== phase && phase === 'extract') {
       this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL CACHES SECURED', 5200);
@@ -2317,7 +2456,13 @@ export class NightfallGame {
         extractSeconds: this.mission.extractSeconds,
         completeIn: this.mission.completeIn,
         contract: this.mission.contract,
+        contractName: this.mission.contractName,
+        contractTag: this.mission.contractTag,
+        contractIndex: this.mission.contractIndex,
+        contractTotal: this.mission.contractTotal,
+        scoreBonus: this.mission.scoreBonus,
       },
+      weather: this.world?.weather?.kind || 'rain',
       enemies: this.localEnemies.filter((e) => e.alive).map((e) => ({
         id: e.id,
         type: e.type,
@@ -2439,6 +2584,18 @@ export class NightfallGame {
         break;
       case 'state':
         if (!this.isHost) this.handleState(msg);
+        break;
+      case 'weather':
+        if (!this.isHost && msg.weather) this.applyWeather(msg.weather, true);
+        break;
+      case 'weather-request':
+        if (this.isHost && msg.weather) {
+          const preset = this.world.getWeatherPreset(msg.weather);
+          if (preset) {
+            this.applyWeather(preset.id, true);
+            this.network?.send('weather', { weather: preset.id, by: this.session?.selfId, name: this.myName });
+          }
+        }
         break;
       case 'shard-request':
         if (this.isHost) this.handleShardRequest(msg);

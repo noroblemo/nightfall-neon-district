@@ -241,7 +241,7 @@ wss.on('connection', (ws, req, url) => {
     const code = String(url.searchParams.get('room') || '').toUpperCase().slice(0, 6);
     const room = rooms.get(code);
     if (!room) {
-      send(ws, { type: 'error', message: 'No city found with that code. Ask your cousin for a fresh invite.' });
+      send(ws, { type: 'error', message: 'No city found with that code. Ask your friend for a fresh invite.' });
       setTimeout(() => ws.close(), 120);
       return;
     }

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { createGlowSpriteTexture } from './textures.js';
 import { clamp, lerp } from './utils.js';
 
@@ -25,131 +26,246 @@ function glowMat(color, opacity = 1) {
   });
 }
 
-export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = false } = {}) {
+function mergeDirectMeshes(container) {
+  if (!container) return;
+  const byMaterial = new Map();
+  for (const child of [...container.children]) {
+    if (!child.isMesh || child.isSprite || child.isInstancedMesh) continue;
+    if (!child.material || Array.isArray(child.material)) continue;
+    const key = child.material.uuid;
+    const list = byMaterial.get(key) || [];
+    list.push(child);
+    byMaterial.set(key, list);
+  }
+  for (const meshes of byMaterial.values()) {
+    if (meshes.length < 2) continue;
+    const geometries = [];
+    for (const mesh of meshes) {
+      mesh.updateMatrix();
+      const geo = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+      geo.applyMatrix4(mesh.matrix);
+      geometries.push(geo);
+    }
+    const merged = mergeGeometries(geometries, false);
+    for (const geo of geometries) geo.dispose();
+    if (!merged) continue;
+    const combined = new THREE.Mesh(merged, meshes[0].material);
+    combined.castShadow = false;
+    combined.receiveShadow = false;
+    container.add(combined);
+    for (const mesh of meshes) {
+      container.remove(mesh);
+      mesh.geometry.dispose?.();
+    }
+  }
+}
+
+export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = false, detail = 1 } = {}) {
   const group = new THREE.Group();
-  // Gentle self-illumination keeps operators readable against the dark city.
-  const lit = hostile ? {} : { emissive: 0x303748, emissiveIntensity: 0.45 };
-  const litPants = hostile ? {} : { emissive: 0x242a39, emissiveIntensity: 0.45 };
-  const litSkin = hostile ? {} : { emissive: skin, emissiveIntensity: 0.22 };
-  const jacket = mat(hostile ? 0x262631 : 0x3a4256, { roughness: 0.75, metalness: 0.15, ...lit });
-  const pants = mat(hostile ? 0x181a20 : 0x2c3346, { roughness: 0.8, ...litPants });
+  // Guards share one cohesive suit material so their static parts can be
+  // merged into a handful of draw calls; operators keep the detailed kit.
+  const compact = hostile && detail < 0.8;
+  const suit = compact
+    ? mat(0x262731, { roughness: 0.6, metalness: 0.32, emissive: 0x2a1219, emissiveIntensity: 0.5 })
+    : null;
+  // Soft self-illumination keeps operators readable against the dark city
+  // without flattening the rounded forms into toy-like silhouettes.
+  const lit = hostile
+    ? { emissive: 0x2a1219, emissiveIntensity: 0.5 }
+    : { emissive: 0x1c2333, emissiveIntensity: 0.5 };
+  const litPants = hostile
+    ? { emissive: 0x160d11, emissiveIntensity: 0.45 }
+    : { emissive: 0x151a25, emissiveIntensity: 0.45 };
+  const litSkin = hostile ? {} : { emissive: skin, emissiveIntensity: 0.1 };
+  const jacket = suit || mat(hostile ? 0x2b2b36 : 0x3b4356, { roughness: 0.78, metalness: 0.16, ...lit });
+  const armor = suit || mat(hostile ? 0x1c1d24 : 0x222834, { roughness: 0.5, metalness: 0.42 });
+  const pants = suit || mat(hostile ? 0x1a1c22 : 0x2d3447, { roughness: 0.82, metalness: 0.08, ...litPants });
+  const rubber = suit || mat(0x0a0b10, { roughness: 0.72, metalness: 0.18 });
   const accent = glowMat(hostile ? 0xff2c55 : color, 1);
   const visor = glowMat(hostile ? 0xff263f : color, 1);
-  const skinMat = mat(skin, { roughness: 0.82, metalness: 0, ...litSkin });
+  const skinMat = suit || mat(skin, { roughness: 0.86, metalness: 0, ...litSkin });
   if (!hostile) {
-    const fill = new THREE.PointLight(0x9fe2ff, 10, 6, 2);
-    fill.position.set(0, 2.3, -1.0);
+    const fill = new THREE.PointLight(0x9fe2ff, 6.5, 5.2, 2);
+    fill.position.set(0, 2.35, -0.9);
     group.add(fill);
   }
 
   const torso = new THREE.Group();
-  torso.position.y = 1.02;
+  torso.position.y = 1.0;
   group.add(torso);
 
-  const chest = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.58, 0.3), jacket);
-  chest.position.y = 0.12;
-  torso.add(chest);
-  const collar = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.13, 0.34), mat(0x0b0d12, { roughness: 0.5, metalness: 0.5 }));
-  collar.position.y = 0.43;
-  torso.add(collar);
-  const chestLine = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.035, 0.02), accent);
-  chestLine.position.set(0, 0.19, 0.158);
-  torso.add(chestLine);
-  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.3), mat(0x08090d, { roughness: 0.4, metalness: 0.6 }));
-  belt.position.y = -0.2;
-  torso.add(belt);
+  // Hips and rounded chest shell
+  const hips = new THREE.Mesh(new RoundedBoxGeometry(0.36, 0.2, 0.27, 3, 0.07), pants);
+  hips.position.y = -0.02;
+  torso.add(hips);
 
+  const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.205, 0.22, 8, 18), jacket);
+  chest.position.y = 0.28;
+  chest.scale.set(1.04, 1, 0.72);
+  torso.add(chest);
+
+  const plate = new THREE.Mesh(new RoundedBoxGeometry(0.36, 0.3, 0.1, 4, 0.05), armor);
+  plate.position.set(0, 0.32, 0.135);
+  torso.add(plate);
+
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.135, 0.038, 8, 22), armor);
+  collar.rotation.x = Math.PI / 2;
+  collar.position.y = 0.53;
+  torso.add(collar);
+
+  const chestLine = new THREE.Mesh(new RoundedBoxGeometry(0.2, 0.028, 0.02, 2, 0.012), accent);
+  chestLine.position.set(0, 0.34, 0.187);
+  torso.add(chestLine);
+
+  const belt = new THREE.Mesh(new RoundedBoxGeometry(0.38, 0.08, 0.28, 3, 0.03), rubber);
+  belt.position.y = 0.02;
+  torso.add(belt);
+  const buckle = new THREE.Mesh(new RoundedBoxGeometry(0.07, 0.05, 0.02, 2, 0.012), accent);
+  buckle.position.set(0, 0.02, 0.145);
+  if (detail >= 0.8) torso.add(buckle);
+
+  // Shoulder pads soften the arm joints
+  for (const side of [-1, 1]) {
+    const pad = new THREE.Mesh(new THREE.SphereGeometry(0.095, 16, 12), armor);
+    pad.scale.set(1.15, 0.8, 1);
+    pad.position.set(side * 0.27, 0.47, 0);
+    torso.add(pad);
+  }
+
+  // Head with a rounded visor band and hood cap
   const headGroup = new THREE.Group();
-  headGroup.position.y = 0.45;
+  headGroup.position.y = 0.55;
   torso.add(headGroup);
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.14, 8), skinMat);
-  neck.position.y = 0.02;
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.13, 12), skinMat);
+  neck.position.y = 0.04;
   headGroup.add(neck);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.175, 12, 10), mat(hostile ? 0x2c2f3a : 0x3a4152, { roughness: 0.55 }));
-  head.scale.set(0.92, 1.06, 0.94);
-  head.position.y = 0.2;
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.172, 24, 18),
+    suit || mat(hostile ? 0x2f323d : 0x3c4354, { roughness: 0.6 }),
+  );
+  head.scale.set(0.92, 1.05, 0.94);
+  head.position.y = 0.19;
   headGroup.add(head);
-  const face = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.09, 0.06), visor);
-  face.position.set(0, 0.21, 0.155);
+  const mask = new THREE.Mesh(new RoundedBoxGeometry(0.19, 0.1, 0.1, 3, 0.035), rubber);
+  mask.position.set(0, 0.12, 0.115);
+  headGroup.add(mask);
+  const face = new THREE.Mesh(new RoundedBoxGeometry(0.245, 0.07, 0.055, 3, 0.028), visor);
+  face.position.set(0, 0.215, 0.145);
   headGroup.add(face);
-  const hood = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), mat(hostile ? 0x111218 : 0x10121a, { roughness: 0.55 }));
+  const hood = new THREE.Mesh(
+    new THREE.SphereGeometry(0.19, 22, 14, 0, Math.PI * 2, 0, Math.PI * 0.42),
+    suit || mat(hostile ? 0x12131a : 0x11141d, { roughness: 0.62 }),
+  );
   hood.position.y = 0.22;
   headGroup.add(hood);
+  if (detail >= 0.8) {
+    for (const side of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.035, 12), armor);
+      ear.rotation.z = Math.PI / 2;
+      ear.position.set(side * 0.165, 0.19, 0);
+      headGroup.add(ear);
+      const earGlow = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.008, 6, 14), accent);
+      earGlow.rotation.y = Math.PI / 2;
+      earGlow.position.set(side * 0.185, 0.19, 0);
+      headGroup.add(earGlow);
+    }
+  }
 
-  // Arms
-  const armGeo = new THREE.BoxGeometry(0.14, 0.54, 0.18);
-  const forearmGeo = new THREE.BoxGeometry(0.12, 0.34, 0.15);
+  // Arms: tapered capsules with beveled cuffs
+  const upperArmGeo = new THREE.CapsuleGeometry(0.065, 0.22, 6, 12);
+  const forearmGeo = new THREE.CapsuleGeometry(0.055, 0.2, 6, 12);
   const makeArm = (side) => {
     const pivot = new THREE.Group();
-    pivot.position.set(side * 0.34, 0.3, 0);
+    pivot.position.set(side * 0.305, 0.46, 0);
     torso.add(pivot);
-    const upper = new THREE.Mesh(armGeo, jacket);
-    upper.position.y = -0.2;
+    const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.075, 14, 10), jacket);
+    shoulder.position.y = -0.02;
+    pivot.add(shoulder);
+    const upper = new THREE.Mesh(upperArmGeo, jacket);
+    upper.position.y = -0.185;
     pivot.add(upper);
     const lowerPivot = new THREE.Group();
-    lowerPivot.position.y = -0.46;
+    lowerPivot.position.y = -0.36;
     pivot.add(lowerPivot);
     const lower = new THREE.Mesh(forearmGeo, jacket);
-    lower.position.y = -0.14;
+    lower.position.y = -0.155;
     lowerPivot.add(lower);
-    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.14), mat(0x101116));
-    hand.position.y = -0.34;
+    const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.058, 0.017, 6, 16), accent);
+    cuff.rotation.x = Math.PI / 2;
+    cuff.position.y = -0.29;
+    lowerPivot.add(cuff);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 10), rubber);
+    hand.scale.set(1, 1.1, 1);
+    hand.position.y = -0.335;
     lowerPivot.add(hand);
-    const cuff = new THREE.Mesh(new THREE.BoxGeometry(0.145, 0.035, 0.185), accent);
-    cuff.position.y = -0.2;
-    pivot.add(cuff);
     return { pivot, lowerPivot, side };
   };
   const leftArm = makeArm(-1);
   const rightArm = makeArm(1);
 
-  // Legs
-  const legPivotGeo = new THREE.BoxGeometry(0.19, 0.62, 0.24);
-  const lowerLegGeo = new THREE.BoxGeometry(0.16, 0.52, 0.2);
+  // Legs: capsule thighs and calves with rounded boots
+  const upperLegGeo = new THREE.CapsuleGeometry(0.082, 0.28, 6, 12);
+  const lowerLegGeo = new THREE.CapsuleGeometry(0.07, 0.26, 6, 12);
   const makeLeg = (side) => {
     const pivot = new THREE.Group();
-    pivot.position.set(side * 0.13, 0.82, 0);
+    pivot.position.set(side * 0.115, 0.98, 0);
     group.add(pivot);
-    const upper = new THREE.Mesh(legPivotGeo, pants);
-    upper.position.y = -0.3;
+    const upper = new THREE.Mesh(upperLegGeo, pants);
+    upper.position.y = -0.21;
     pivot.add(upper);
+    const thighPlate = new THREE.Mesh(new RoundedBoxGeometry(0.13, 0.2, 0.06, 3, 0.025), armor);
+    thighPlate.position.set(0, -0.16, 0.075);
+    if (detail >= 0.8) pivot.add(thighPlate);
     const lowerPivot = new THREE.Group();
-    lowerPivot.position.y = -0.62;
+    lowerPivot.position.y = -0.44;
     pivot.add(lowerPivot);
     const lower = new THREE.Mesh(lowerLegGeo, pants);
-    lower.position.y = -0.24;
+    lower.position.y = -0.18;
     lowerPivot.add(lower);
-    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.15, 0.37), mat(0x090a0e, { roughness: 0.5, metalness: 0.3 }));
-    boot.position.set(0, -0.52, 0.08);
+    const knee = new THREE.Mesh(new THREE.SphereGeometry(0.07, 14, 10), armor);
+    knee.scale.set(1, 0.85, 0.9);
+    knee.position.set(0, 0.005, 0.02);
+    if (detail >= 0.8) lowerPivot.add(knee);
+    const boot = new THREE.Mesh(new RoundedBoxGeometry(0.17, 0.12, 0.3, 4, 0.05), rubber);
+    boot.position.set(0, -0.42, 0.055);
     lowerPivot.add(boot);
-    const shin = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.03, 0.22), accent);
-    shin.position.set(0, -0.38, 0.02);
-    lowerPivot.add(shin);
+    const shin = new THREE.Mesh(new RoundedBoxGeometry(0.055, 0.17, 0.02, 2, 0.01), accent);
+    shin.position.set(0, -0.22, 0.08);
+    if (detail >= 0.8) lowerPivot.add(shin);
     return { pivot, lowerPivot, side };
   };
   const leftLeg = makeLeg(-1);
   const rightLeg = makeLeg(1);
 
   // Backpack / gear
-  const pack = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.44, 0.16), mat(0x0c0e14, { roughness: 0.55, metalness: 0.35 }));
-  pack.position.set(0, 0.14, -0.22);
+  const pack = new THREE.Mesh(new RoundedBoxGeometry(0.34, 0.4, 0.15, 4, 0.045), armor);
+  pack.position.set(0, 0.3, -0.19);
   torso.add(pack);
-  const packLight = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.025, 0.02), accent);
-  packLight.position.set(0, 0.26, -0.31);
-  torso.add(packLight);
+  const packLight = new THREE.Mesh(new RoundedBoxGeometry(0.16, 0.022, 0.02, 2, 0.01), accent);
+  packLight.position.set(0, 0.41, -0.27);
+  if (detail >= 0.8) torso.add(packLight);
+  const canister = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 10), rubber);
+  canister.position.set(0.11, 0.28, -0.275);
+  if (detail >= 0.8) torso.add(canister);
 
   // Weapon silhouette
   const weapon = new THREE.Group();
-  const gunBody = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.12, 0.36), mat(0x0a0c11, { roughness: 0.35, metalness: 0.8 }));
+  const gunBody = new THREE.Mesh(
+    new RoundedBoxGeometry(0.075, 0.105, 0.34, 3, 0.02),
+    suit || mat(0x0a0c11, { roughness: 0.35, metalness: 0.8 }),
+  );
   weapon.add(gunBody);
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.03, 0.23, 6), mat(0x20242b, { roughness: 0.4, metalness: 0.8 }));
+  const barrel = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.026, 0.03, 0.23, 8),
+    suit || mat(0x20242b, { roughness: 0.4, metalness: 0.8 }),
+  );
   barrel.rotation.x = Math.PI / 2;
   barrel.position.set(0, 0.02, 0.26);
   weapon.add(barrel);
-  const gunGlow = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 0.18), accent);
+  const gunGlow = new THREE.Mesh(new RoundedBoxGeometry(0.02, 0.02, 0.18, 2, 0.008), accent);
   gunGlow.position.set(0.045, 0.01, 0.1);
   weapon.add(gunGlow);
-  weapon.position.set(0, -0.34, 0.18);
+  weapon.position.set(0, -0.32, 0.18);
   rightArm.lowerPivot.add(weapon);
 
   const flash = new THREE.Sprite(
@@ -164,7 +280,7 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
     }),
   );
   flash.scale.set(0.6, 0.6, 1);
-  flash.position.set(0, -0.34, 0.48);
+  flash.position.set(0, -0.32, 0.48);
   rightArm.lowerPivot.add(flash);
 
   group.traverse((obj) => {
@@ -173,6 +289,18 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
       obj.receiveShadow = false;
     }
   });
+
+  // Batch the static detail inside each animated pivot so guards stay cheap.
+  mergeDirectMeshes(torso);
+  mergeDirectMeshes(headGroup);
+  for (const arm of [leftArm, rightArm]) {
+    mergeDirectMeshes(arm.pivot);
+    mergeDirectMeshes(arm.lowerPivot);
+  }
+  for (const leg of [leftLeg, rightLeg]) {
+    mergeDirectMeshes(leg.pivot);
+    mergeDirectMeshes(leg.lowerPivot);
+  }
 
   const state = {
     group,
@@ -195,9 +323,9 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
     const swing = Math.sin(stride) * (0.12 + speed * 0.7);
     const bounce = Math.abs(Math.sin(stride)) * speed * 0.035;
     if (grounded) {
-      torso.position.y = 1.02 + bounce;
-      torso.rotation.x = speed * 0.11;
-      torso.rotation.z = Math.sin(stride) * speed * 0.035;
+      torso.position.y = 1.0 + bounce;
+      torso.rotation.x = speed * 0.09;
+      torso.rotation.z = Math.sin(stride) * speed * 0.03;
       leftLeg.pivot.rotation.x = swing;
       rightLeg.pivot.rotation.x = -swing;
       leftLeg.lowerPivot.rotation.x = Math.max(0, -swing) * 0.55;
@@ -206,7 +334,7 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
       rightArm.pivot.rotation.x = swing * 0.45;
       leftArm.lowerPivot.rotation.x = -Math.max(0, swing) * 0.3;
     } else {
-      torso.position.y = 1.02;
+      torso.position.y = 1.0;
       torso.rotation.x = -0.08;
       torso.rotation.z = 0;
       leftLeg.pivot.rotation.x = -0.5;
@@ -575,10 +703,20 @@ export function buildDrone() {
     rotorGlow.position.set(side * 1.02, 0.08, 0);
     group.add(rotorGlow);
   }
-  const search = new THREE.SpotLight(0xff2f55, 0, 16, 0.4, 0.7, 1.6);
-  search.position.set(0, -0.2, 0.4);
-  search.target.position.set(0, -5, 3);
-  group.add(search, search.target);
+  // A translucent cone reads as a search beam without the cost of a real
+  // spotlight; multiple drone spotlights were the main frame-rate killer.
+  const beamMat = new THREE.MeshBasicMaterial({
+    color: 0xff2f55,
+    transparent: true,
+    opacity: 0.08,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  const search = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 2.4, 9, 18, 1, true), beamMat);
+  search.position.set(0, -4.3, 0.8);
+  group.add(search);
   group.userData.eye = eye;
   group.userData.glowRing = glowRing;
   group.userData.search = search;
@@ -592,7 +730,7 @@ export function buildDrone() {
       glowRing.rotation.z -= dt * 2.2;
       eye.scale.setScalar(1 + Math.sin(time * 5) * 0.12);
       eye.material.color.setHex(alert ? 0xff1b3d : 0xff7b4d);
-      search.intensity = alert ? 12 : 3;
+      search.material.opacity = alert ? 0.2 : 0.06;
       group.position.y += 0;
     },
   };
@@ -683,7 +821,7 @@ export function buildShard() {
 }
 
 export function buildGuard() {
-  return buildCharacter({ color: 0xff2c55, skin: 0xb88464, hostile: true });
+  return buildCharacter({ color: 0xff2c55, skin: 0xb88464, hostile: true, detail: 0.5 });
 }
 
 export function buildShadowTexture() {

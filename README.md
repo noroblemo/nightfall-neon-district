@@ -8,8 +8,9 @@ A browser-based co-op open-world action game with Forza-style arcade driving, bu
 
 ## Features
 
-- **Open world** — a procedural neon city (~436m across) with buildings, plaza, metro landmarks, rain, dynamic lights and bloom post-processing.
-- **Co-op heist contract** — breach three data caches with a partner, then reach the extraction gate at the plaza while security hunts you.
+- **Open world** — a procedural neon city (~436m across) with buildings, plaza, metro landmarks, dynamic lights and bloom post-processing.
+- **Switchable weather** — rain, clear skies, dense fog, electric storms and snow, with smooth transitions; press `V` in-game to cycle (the host picks for the room).
+- **Contract ladder** — six escalating heist contracts, from GHOST PROTOCOL to LAST SIGNAL, with more caches, tighter security and longer extractions each run. Clear one and the next begins automatically.
 - **Driving** — arcade supercar physics with boost, handbrake drifts, tire trails, chase camera and engine audio.
 - **Combat** — third-person over-shoulder shooting with tracers, hitmarkers, reloads, guards and scout drones with detection/leash AI.
 - **Online multiplayer** — room codes, up to 4 operatives per room on the WebSocket relay (2 on P2P fallback). Host-authoritative mission/enemy simulation with client prediction for movement.
@@ -38,7 +39,7 @@ Both players just need a modern browser (Chrome/Edge/Firefox/Safari). Three ways
 
 ### 0. Straight from GitHub Pages (zero setup)
 
-Share **https://noroblemo.github.io/nightfall-neon-district/** with your cousin. The static site has no game relay, so online play uses the built-in **Peer-to-Peer** mode (2 players, WebRTC via PeerJS): one of you clicks **HOST THE CITY**, the other enters the room code and clicks **JOIN**. Works across the internet as long as your network allows WebRTC; no install needed.
+Share **https://noroblemo.github.io/nightfall-neon-district/** with your friend. The static site has no game relay, so online play uses the built-in **Peer-to-Peer** mode (2 players, WebRTC via PeerJS): one of you clicks **HOST THE CITY**, the other enters the room code and clicks **JOIN**. Works across the internet as long as your network allows WebRTC; no install needed.
 
 ### 1. Same Wi-Fi / LAN (fastest, relay rooms up to 4)
 
@@ -64,7 +65,7 @@ If you're not on the same network, expose your local server temporarily:
 npx cloudflared tunnel --url http://localhost:3000
 ```
 
-(any tunnel works — cloudflared, ngrok `npx ngrok http 3000`, Tailscale Funnel). Share the printed URL with your cousin; the WebSocket relay at `/ws` works through it automatically. The Mac stays the host; no accounts or deployment needed.
+(any tunnel works — cloudflared, ngrok `npx ngrok http 3000`, Tailscale Funnel). Share the printed URL with your friend; the WebSocket relay at `/ws` works through it automatically. The Mac stays the host; no accounts or deployment needed.
 
 ### 3. Deploy it (always-on)
 
@@ -85,13 +86,14 @@ Any Node host works:
 | `E` | Interact — breach data cache |
 | `R` | Reload (foot) / flip car (driving) |
 | `Q` | Map ping for your partner |
+| `V` | Cycle weather (host sets the room's weather) |
 | `T` | Chat |
 | `M` | Mute |
 
 ## Multiplayer architecture
 
 - `server.js` — static file host + WebSocket relay (`/ws`). Relays gameplay messages inside rooms; no game simulation server-side. `/api/health` for status.
-- Host client owns the mission: shards, enemies, extraction. Guests send intents (`shard-request`, `shot`, `chat`, `map-ping`, `player-state`); the host validates (range + line-of-sight anti-cheat) and broadcasts authoritative state at ~11 Hz.
+- Host client owns the mission: the contract ladder, shards, enemies, extraction and weather. Guests send intents (`shard-request`, `shot`, `weather-request`, `chat`, `map-ping`, `player-state`); the host validates (range + line-of-sight anti-cheat) and broadcasts authoritative state at ~11 Hz.
 - If the relay is unreachable, `src/network.js` falls back to PeerJS WebRTC mesh (2 players).
 
 ## Project layout

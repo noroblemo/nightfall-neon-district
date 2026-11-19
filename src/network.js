@@ -344,7 +344,7 @@ export class Network {
         peer.on('error', (err) => {
           console.warn('Peer error', err);
           let text = 'Could not join the peer city.';
-          if (err?.type === 'peer-unavailable') text = 'No city found with that code. Ask your cousin to check the code.';
+          if (err?.type === 'peer-unavailable') text = 'No city found with that code. Ask your friend to check the code.';
           else if (err?.type === 'network' || err?.type === 'server-error') text = 'The public matchmaking service is unreachable. Try again or use the deployed server.';
           if (!settled) {
             clearTimeout(timer);
