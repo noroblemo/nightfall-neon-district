@@ -2,7 +2,9 @@
 
 A browser-based co-op open-world action game with Forza-style arcade driving, built with Three.js. Neon-noir city, heist contract, hostile security drones and guards, drivable supercars — play solo or online with a friend.
 
-> The original calculator app lives on in [`legacy-calculator/`](legacy-calculator/).
+**▶ Play now: https://noroblemo.github.io/nightfall-neon-district/**
+
+> The original calculator app lives on in [`legacy-calculator/`](legacy-calculator/) and keeps its own repo.
 
 ## Features
 
@@ -34,7 +36,11 @@ Open `http://localhost:3000` and click **CONTINUE SOLO**, or host/join a room fo
 
 Both players just need a modern browser (Chrome/Edge/Firefox/Safari). Three ways to connect, easiest first:
 
-### 1. Same Wi-Fi / LAN (fastest, zero setup)
+### 0. Straight from GitHub Pages (zero setup)
+
+Share **https://noroblemo.github.io/nightfall-neon-district/** with your cousin. The static site has no game relay, so online play uses the built-in **Peer-to-Peer** mode (2 players, WebRTC via PeerJS): one of you clicks **HOST THE CITY**, the other enters the room code and clicks **JOIN**. Works across the internet as long as your network allows WebRTC; no install needed.
+
+### 1. Same Wi-Fi / LAN (fastest, relay rooms up to 4)
 
 On the Mac (host machine):
 
