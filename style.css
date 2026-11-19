@@ -921,15 +921,25 @@ kbd {
 }
 
 .district-tag__weather {
+  appearance: none;
   padding: 2px 6px;
   border: 1px solid rgba(93, 246, 255, 0.32);
   border-radius: 3px;
   background: rgba(93, 246, 255, 0.08);
   color: var(--cyan);
+  font-family: inherit;
   font-size: 8px;
   font-weight: 600;
+  line-height: 1.2;
   letter-spacing: 0.18em;
-  transition: color 0.4s ease, border-color 0.4s ease, background 0.4s ease;
+  cursor: pointer;
+  transition: color 0.4s ease, border-color 0.4s ease, background 0.4s ease, box-shadow 0.2s ease;
+}
+
+.district-tag__weather:hover,
+.district-tag__weather:focus-visible {
+  box-shadow: 0 0 10px rgba(93, 246, 255, 0.35);
+  outline: none;
 }
 
 .district-tag__weather[data-weather="clear"] {
@@ -2122,6 +2132,23 @@ kbd {
   font-size: 8px;
   letter-spacing: 0.19em;
   color: var(--muted-2);
+}
+
+.setting--weather {
+  grid-column: 1 / -1;
+}
+
+.setting--weather > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setting--weather small {
+  font-size: 7px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 180, 77, 0.8);
 }
 
 .segmented {

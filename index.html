@@ -137,7 +137,7 @@
         <div class="district-tag">
           <span class="district-tag__live"><i></i> LIVE</span>
           <span>NEON GRID // SECTOR 07</span>
-          <span id="weatherTag" class="district-tag__weather" data-weather="rain">RAIN</span>
+          <button id="weatherTag" class="district-tag__weather" data-weather="rain" type="button" title="Change weather (V)">RAIN</button>
           <span id="hudClock" class="district-tag__clock">23:47</span>
         </div>
         <div class="mission-card">
@@ -278,11 +278,21 @@
             <span>AUDIO</span>
             <button id="muteBtn" class="mini-btn" type="button">SOUND ON</button>
           </div>
+          <div class="setting setting--weather">
+            <span>WEATHER <small>HOST SETS THE ROOM</small></span>
+            <div class="segmented weather-group" id="weatherGroup" role="group" aria-label="Weather">
+              <button type="button" data-weather="rain" aria-pressed="true" class="is-active">RAIN</button>
+              <button type="button" data-weather="clear" aria-pressed="false">CLEAR</button>
+              <button type="button" data-weather="fog" aria-pressed="false">FOG</button>
+              <button type="button" data-weather="storm" aria-pressed="false">STORM</button>
+              <button type="button" data-weather="snow" aria-pressed="false">SNOW</button>
+            </div>
+          </div>
         </div>
         <div class="pause-panel__controls">
           <span><kbd>WASD</kbd> MOVE</span><span><kbd>MOUSE</kbd> LOOK</span><span><kbd>LMB</kbd> FIRE</span>
           <span><kbd>RMB</kbd> AIM</span><span><kbd>F</kbd> VEHICLE</span><span><kbd>E</kbd> INTERACT</span>
-          <span><kbd>SPACE</kbd> JUMP / BRAKE</span><span><kbd>Q</kbd> PING</span><span><kbd>T</kbd> CHAT</span>
+          <span><kbd>SPACE</kbd> JUMP / BRAKE</span><span><kbd>Q</kbd> PING</span><span><kbd>V</kbd> WEATHER</span><span><kbd>T</kbd> CHAT</span>
         </div>
         <button id="leaveBtn" class="text-btn" type="button">LEAVE DISTRICT</button>
       </div>

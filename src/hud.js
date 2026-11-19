@@ -324,12 +324,21 @@ export class UI {
     }
   }
 
-  setWeather(label, tagline) {
+  setWeather(label, tagline, id) {
     const el = $('weatherTag');
     if (!el) return;
+    const weatherId = String(id || label || 'rain').toLowerCase();
     setText(el, label || 'RAIN');
-    el.dataset.weather = String(label || 'rain').toLowerCase();
-    if (tagline) el.title = tagline;
+    el.dataset.weather = weatherId;
+    el.title = tagline ? `${tagline} — click to change weather (V)` : 'Change weather (V)';
+    const group = $('weatherGroup');
+    if (group) {
+      for (const btn of group.querySelectorAll('button[data-weather]')) {
+        const active = btn.dataset.weather === weatherId;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      }
+    }
   }
 
   setVitals(health, stamina) {

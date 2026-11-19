@@ -343,6 +343,18 @@ export class NightfallGame {
       button.addEventListener('click', () => this.applyQuality(button.dataset.quality || 'balanced'));
     });
 
+    const weatherGroup = document.getElementById('weatherGroup');
+    if (weatherGroup) {
+      weatherGroup.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-weather]');
+        if (button) this.selectWeather(button.dataset.weather);
+      });
+    }
+    const weatherTag = document.getElementById('weatherTag');
+    if (weatherTag) {
+      weatherTag.addEventListener('click', () => this.cycleWeather());
+    }
+
     const chatInput = document.getElementById('chatInput');
     if (chatInput) {
       chatInput.addEventListener('keydown', (event) => {
@@ -499,7 +511,7 @@ export class NightfallGame {
     this.ui.setBoost(1, false);
     this.ui.initMinimap(this.world);
     this.ui.setInteraction('', false);
-    this.ui.setWeather(this.weatherLabel(), this.world.getWeatherPreset(this.world.weather.kind)?.tagline);
+    this.ui.setWeather(this.weatherLabel(), this.world.getWeatherPreset(this.world.weather.kind)?.tagline, this.world.weather.kind);
     this.ui.showMissionBanner(
       'GHOST PROTOCOL',
       this.isHost ? 'SECURE THE DATA CACHES' : 'SYNCING WITH HOST',
@@ -912,10 +924,28 @@ export class NightfallGame {
     if (!this.world?.setWeather) return;
     const already = this.world.weather.kind === id;
     const preset = this.world.setWeather(id, true);
-    this.ui.setWeather?.(preset.label, preset.tagline);
+    this.ui.setWeather?.(preset.label, preset.tagline, preset.id);
     if (announce && !already) {
       this.ui.toast(`Weather: ${preset.label}`, 'info', 2200);
       this.ui.feed(`${preset.tagline} rolling over the district.`, 'info', 'WEATHER');
+    }
+  }
+
+  selectWeather(id) {
+    const preset = (this.world?.weatherList || []).find((item) => item.id === id);
+    if (!preset) return;
+    if (this.world.weather.kind === preset.id) {
+      this.ui.toast(`${preset.label} weather is already active.`, 'info', 1600);
+      return;
+    }
+    if (this.session?.online && !this.isHost) {
+      this.network?.send('weather-request', { weather: preset.id, name: this.myName });
+      this.ui.toast(`Requested ${preset.label.toLowerCase()} weather.`, 'info', 1800);
+      return;
+    }
+    this.applyWeather(preset.id, true);
+    if (this.session?.online && this.isHost) {
+      this.network?.send('weather', { weather: preset.id, by: this.session.selfId, name: this.myName });
     }
   }
 
@@ -924,15 +954,7 @@ export class NightfallGame {
     if (!list.length) return;
     const index = list.findIndex((item) => item.id === this.world.weather.kind);
     const next = list[(index + 1) % list.length];
-    if (this.session?.online && !this.isHost) {
-      this.network?.send('weather-request', { weather: next.id, name: this.myName });
-      this.ui.toast(`Requested ${next.label.toLowerCase()} weather.`, 'info', 1800);
-      return;
-    }
-    this.applyWeather(next.id, true);
-    if (this.session?.online && this.isHost) {
-      this.network?.send('weather', { weather: next.id, by: this.session.selfId, name: this.myName });
-    }
+    this.selectWeather(next.id);
   }
 
   jump() {
