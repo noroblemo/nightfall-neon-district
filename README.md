@@ -9,7 +9,8 @@ A browser-based co-op open-world action game with Forza-style arcade driving, bu
 ## Features
 
 - **Open world** — a procedural neon city (~436m across) with buildings, plaza, metro landmarks, dynamic lights and bloom post-processing.
-- **Switchable weather** — rain, clear skies, dense fog, electric storms and snow, with smooth transitions. Press `V` in-game or use the **WEATHER** toggle in the pause menu (the host picks for the room).
+- **Switchable weather** — rain, clear skies, dense fog, electric storms and snow, with smooth transitions and a distinct soundscape for each: rain patter, city air, foghorns, rolling thunder and icy wind. Press `V` in-game or use the **WEATHER** toggle in the pause menu (the host picks for the room).
+- **Adaptive audio** — an original synthwave score during contracts, plus positional foley for weapons, footsteps, vehicles and pickups. `M` or the pause-menu button mutes everything.
 - **Contract ladder** — six escalating heist contracts, from GHOST PROTOCOL to LAST SIGNAL, with more caches, tighter security and longer extractions each run. Clear one and the next begins automatically.
 - **Driving** — arcade supercar physics with boost, handbrake drifts, tire trails, chase camera and engine audio.
 - **Combat** — third-person over-shoulder shooting with tracers, hitmarkers, reloads, guards and scout drones with detection/leash AI.

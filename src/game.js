@@ -524,6 +524,8 @@ export class NightfallGame {
     this.completed = false;
     this.ignoreUnlock = false;
     this.currentMode = 'foot';
+    this.audio.setWeather?.(this.world.weather.kind, true);
+    this.audio.setMusicActive?.(true);
     this.cameraYaw = this.world.spawn.rot;
     this.cameraPitch = -0.08;
     this.mission = null;
@@ -645,6 +647,7 @@ export class NightfallGame {
   }
 
   startMission() {
+    this.audio.setMusicActive?.(true);
     this.missionCount += 1;
     const contractDef = CONTRACTS[(this.missionCount - 1) % CONTRACTS.length];
     const stage = ((this.missionCount - 1) % CONTRACTS.length) + 1;
@@ -859,6 +862,7 @@ export class NightfallGame {
     this.paused = paused;
     this.status = paused ? 'paused' : 'playing';
     this.ui.setPaused(paused);
+    this.audio.setMusicActive?.(!paused);
     this.keys.clear();
     this.mouseDown = false;
     this.aiming = false;
@@ -925,6 +929,7 @@ export class NightfallGame {
     const already = this.world.weather.kind === id;
     const preset = this.world.setWeather(id, true);
     this.ui.setWeather?.(preset.label, preset.tagline, preset.id);
+    this.audio.setWeather?.(preset.id);
     if (announce && !already) {
       this.ui.toast(`Weather: ${preset.label}`, 'info', 2200);
       this.ui.feed(`${preset.tagline} rolling over the district.`, 'info', 'WEATHER');
@@ -1710,6 +1715,7 @@ export class NightfallGame {
     this.resultTimer = 12;
     this.status = 'result';
     this.ignoreUnlock = true;
+    this.audio.setMusicActive?.(false);
     this.mouseDown = false;
     this.aiming = false;
     this.ui.setCrosshair(false);
@@ -2430,6 +2436,7 @@ export class NightfallGame {
       this.completed = true;
       this.status = 'result';
       this.ignoreUnlock = true;
+      this.audio.setMusicActive?.(false);
       this.mouseDown = false;
       this.aiming = false;
       this.ui.setCrosshair(false);
@@ -2450,6 +2457,7 @@ export class NightfallGame {
       this.ui.hideResult();
       if (this.player?.alive) {
         this.status = this.paused ? 'paused' : 'playing';
+        this.audio.setMusicActive?.(!this.paused);
         this.ui.setLockHint(true);
       }
     }
@@ -3007,6 +3015,7 @@ export class NightfallGame {
     this.session = null;
     this.status = 'menu';
     this.ignoreUnlock = true;
+    this.audio.setMusicActive?.(false);
     this.network?.close();
     this.network = null;
     window.location.href = window.location.pathname;
