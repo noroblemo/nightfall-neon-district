@@ -291,6 +291,33 @@ export class Effects {
     });
   }
 
+  // Kick-up behind a sprinting operator. Wet streets throw a bright spray,
+  // snow lifts a soft puff, and dry weather leaves a low dust trail.
+  runSpray(x, z, dirX, dirZ, weather = 'rain') {
+    const wet = weather === 'rain' || weather === 'storm';
+    const snow = weather === 'snow';
+    const color = wet ? 0x9feaff : snow ? 0xe8f2ff : 0x7d8799;
+    const count = wet ? 6 : 5;
+    for (let i = 0; i < count; i += 1) {
+      const back = 1.1 + Math.random() * (wet ? 2.2 : 1.4);
+      const side = (Math.random() - 0.5) * (wet ? 1.6 : 1);
+      this.spawn({
+        x: x + (Math.random() - 0.5) * 0.22,
+        y: 0.06 + Math.random() * 0.08,
+        z: z + (Math.random() - 0.5) * 0.22,
+        vx: -dirX * back - dirZ * side,
+        vy: wet ? 0.9 + Math.random() * 1.2 : snow ? 0.5 + Math.random() * 0.7 : 0.25 + Math.random() * 0.4,
+        vz: -dirZ * back + dirX * side,
+        life: wet ? 0.3 + Math.random() * 0.2 : 0.42 + Math.random() * 0.25,
+        size: wet ? 0.1 + Math.random() * 0.08 : 0.18 + Math.random() * 0.14,
+        endSize: wet ? 0.3 : 0.55,
+        color,
+        drag: 0.94,
+        gravity: wet ? 7 : snow ? 1.6 : 0.4,
+      });
+    }
+  }
+
   sparkle(pos, color = 0x9ef7ff) {
     this.spawn({
       x: pos.x + (Math.random() - 0.5) * 1.5,

@@ -1057,9 +1057,18 @@ export class NightfallGame {
       p.pos.x += moveX * p.moveSpeed * dt;
       p.pos.z += moveZ * p.moveSpeed * dt;
       this.stepAccum = (this.stepAccum || 0) + p.moveSpeed * dt;
-      if (this.stepAccum > (wantsSprint ? 2.25 : 1.7)) {
+      if (this.stepAccum > (wantsSprint ? 2.05 : 1.7)) {
         this.stepAccum = 0;
         this.audio.footstep(wantsSprint);
+        if (wantsSprint) {
+          this.effects?.runSpray?.(
+            p.pos.x - moveX * 0.35,
+            p.pos.z - moveZ * 0.35,
+            moveX,
+            moveZ,
+            this.world?.weather?.kind || 'rain',
+          );
+        }
       }
     }
 
@@ -1091,7 +1100,7 @@ export class NightfallGame {
       this.localChar.group.visible = true;
       this.localChar.group.position.copy(p.pos);
       this.localChar.group.rotation.y = p.bodyYaw;
-      this.localChar.animate(dt, elapsed, p.moveSpeed, p.grounded, this.aiming);
+      this.localChar.animate(dt, elapsed, p.moveSpeed, p.grounded, this.aiming, p.sprinting);
     }
     if (this.localCharShadow) {
       this.localCharShadow.visible = true;
@@ -1497,17 +1506,33 @@ export class NightfallGame {
       this.camera.position.x += (Math.random() - 0.5) * shake * 0.28;
       this.camera.position.y += (Math.random() - 0.5) * shake * 0.2;
     }
-    const bob = p.grounded && p.moveSpeed > 0.2
-      ? Math.sin(elapsed * (p.sprinting ? 12 : 8)) * Math.min(0.045, p.moveSpeed * 0.006)
+    // Match the camera cadence to the actual gait so the view rises on foot
+    // plants instead of drifting against the character's stride.
+    const strideRate = 7.4 + Math.min(p.moveSpeed / 8, 1.6) * 6.2 + (p.sprinting ? 1.4 : 0);
+    const stride = elapsed * strideRate;
+    const moving = p.moveSpeed > 0.2;
+    const bob = p.grounded && moving
+      ? Math.sin(stride) * (p.sprinting ? 0.038 : Math.min(0.018, p.moveSpeed * 0.003))
       : 0;
+    const sway = p.grounded && moving
+      ? Math.sin(stride) * (p.sprinting ? 0.038 : 0.009)
+      : 0;
+    this.camera.position.x += rightX * sway;
+    this.camera.position.z += rightZ * sway;
     this.camera.position.y += bob;
     this.camera.lookAt(
       this.camera.position.x + dir.x,
       this.camera.position.y + dir.y,
       this.camera.position.z + dir.z,
     );
-    const targetFov = this.aiming ? 46 : (p.sprinting ? 71 : 62);
+    if (p.grounded && moving) {
+      this.camera.rotateZ(Math.sin(stride) * (p.sprinting ? 0.02 : 0.005));
+    }
+    const targetFov = this.aiming ? 46 : 62 + clamp((p.moveSpeed - 5.3) / 4.9, 0, 1) * 8.5;
     this.setCameraFov(targetFov, dt);
+    const sprintFx = this.status === 'playing' && !this.paused && !this.chatOpen
+      && !this.controlsOpen && p.grounded && p.sprinting && p.moveSpeed > 6.4 && !this.aiming;
+    this.ui.setSprinting?.(sprintFx);
     if (this.localChar) {
       const camDistance = this.camera.position.distanceTo(p.pos);
       this.localChar.group.visible = p.alive && (camDistance > 0.85);
@@ -2834,7 +2859,7 @@ export class NightfallGame {
         remote.shadow.visible = remote.alive;
         remote.char.group.position.copy(remote.pos);
         remote.char.group.rotation.y = remote.bodyYaw;
-        remote.char.animate(dt, elapsed, remote.moveSpeed, true, false);
+        remote.char.animate(dt, elapsed, remote.moveSpeed, true, false, remote.moveSpeed > 7);
         remote.shadow.position.set(remote.pos.x, 0.045, remote.pos.z);
       }
       if (!remote.alive) {

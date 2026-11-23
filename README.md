@@ -34,6 +34,17 @@ npm start         # in another terminal
 
 Open `http://localhost:3000` and click **CONTINUE SOLO**, or host/join a room for online co-op.
 
+## Operator asset
+
+The playable operative is a rigged Blender GLB with `Idle`, `Walk`, `Sprint`, `Aim`, `AimWalk` and `Air` clips. It has a lean tactical suit, a Tron-style helmet with player-coloured light lines, and a thigh holster. Rebuild it with:
+
+```bash
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+  --python tools/build_operator.py -- --render
+```
+
+The build writes `assets/operator.glb` and refreshes the previews in `previews/`. Bump the `?v=` query on `OPERATOR_ASSET_URL` in `src/main.js` after rebuilding so browsers and CDNs fetch the new GLB. If the asset is missing or fails to load, the game falls back to the procedural operator.
+
 ## Playing with a friend (Mac ↔ Windows)
 
 Both players just need a modern browser (Chrome/Edge/Firefox/Safari). Three ways to connect, easiest first:

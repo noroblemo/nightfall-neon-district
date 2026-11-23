@@ -363,7 +363,10 @@ export class UI {
     $('speedometer')?.classList.toggle('hidden', mode !== 'car');
     $('vehiclePrompt')?.classList.toggle('hidden', mode !== 'car');
     $('weaponPanel')?.classList.toggle('is-hidden', mode === 'car');
-    if (mode === 'car') $('speedLines')?.classList.remove('is-boosting');
+    if (mode === 'car') {
+      $('speedLines')?.classList.remove('is-boosting');
+      $('speedLines')?.classList.remove('is-sprinting');
+    }
   }
 
   setAmmo(ammo, reserve, reloadProgress = 0) {
@@ -416,6 +419,10 @@ export class UI {
 
   setBoosting(active) {
     $('speedLines')?.classList.toggle('is-boosting', active);
+  }
+
+  setSprinting(active) {
+    $('speedLines')?.classList.toggle('is-sprinting', !!active);
   }
 
   setCarStats(speed, boost, gear, throttle = 0) {

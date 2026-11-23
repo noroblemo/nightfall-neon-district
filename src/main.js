@@ -3,10 +3,12 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { UI } from './hud.js';
 import { createWorld } from './world.js';
 import { Effects } from './effects.js';
 import { AudioEngine } from './audio.js';
+import { setOperatorAsset } from './models.js';
 import { NightfallGame } from './game.js';
 
 const QUALITY = {
@@ -16,6 +18,9 @@ const QUALITY = {
 };
 
 const QUALITY_KEY = 'nightfall:quality';
+// Bump this when the operator asset changes so CDNs and GitHub Pages pick up
+// the new GLB instead of a previously cached build.
+const OPERATOR_ASSET_URL = './assets/operator.glb?v=20261123b';
 const canvas = document.getElementById('gameCanvas');
 const ui = new UI();
 ui.setLoading(0.04, 'INITIALIZING THE DISTRICT');
@@ -132,6 +137,16 @@ async function boot() {
     applyDpr();
   }
   applyQuality(initialQuality);
+
+  ui.setLoading(0.8, 'DEPLOYING THE OPERATOR');
+  await nextFrame();
+  try {
+    const gltf = await new GLTFLoader().loadAsync(OPERATOR_ASSET_URL);
+    setOperatorAsset(gltf);
+  } catch (error) {
+    // The procedural operator remains fully playable if the asset is missing.
+    console.warn('[nightfall] operator asset unavailable, using procedural fallback:', error);
+  }
 
   ui.setLoading(0.84, 'BINDING THE RESPONSE GRID');
   await nextFrame();

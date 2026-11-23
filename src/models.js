@@ -1,10 +1,19 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { createGlowSpriteTexture } from './textures.js';
 import { clamp, lerp } from './utils.js';
 
 const bodyMaterialCache = new Map();
+let operatorAsset = null;
+
+// The Blender-authored operator is optional: if the GLB cannot be fetched the
+// game falls back to the procedural rig below without changing gameplay.
+export function setOperatorAsset(gltf) {
+  operatorAsset = gltf && gltf.scene ? gltf : null;
+}
+
 
 function mat(color, opts = {}) {
   return new THREE.MeshStandardMaterial({
@@ -60,7 +69,144 @@ function mergeDirectMeshes(container) {
   }
 }
 
+function buildBlenderOperator({ color = 0x35e9ff } = {}) {
+  const group = new THREE.Group();
+  const model = cloneSkeleton(operatorAsset.scene);
+  let visorMaterial = null;
+
+  model.traverse((obj) => {
+    if (!obj.isMesh) return;
+    // Each operator owns its geometry and materials so recolouring or
+    // respawning the local player cannot invalidate remote players.
+    obj.geometry = obj.geometry.clone();
+    obj.castShadow = false;
+    obj.receiveShadow = false;
+    // Skinned bounds inflate during the sprint stride; keep the operator
+    // visible instead of letting the chase camera clip the mesh.
+    obj.frustumCulled = false;
+    const sources = Array.isArray(obj.material) ? obj.material : [obj.material];
+    const materials = sources.map((source) => {
+      const copy = source.clone();
+      if (copy.name === 'NF_Accent' || copy.name === 'NF_Visor') {
+        copy.color.setHex(0x06141a);
+        copy.emissive.setHex(color);
+        copy.emissiveIntensity = copy.name === 'NF_Visor' ? 1.1 : 0.95;
+        copy.toneMapped = false;
+      }
+      if (copy.name === 'NF_Visor') visorMaterial = copy;
+      return copy;
+    });
+    obj.material = Array.isArray(obj.material) ? materials : materials[0];
+  });
+
+  group.add(model);
+  if (!operatorAsset.animations?.length) return null;
+
+  // Muzzle flash rides the exported weapon bone so it tracks the sprint carry
+  // and the aim pose instead of hovering at a fixed offset.
+  const flash = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createGlowSpriteTexture('#ffe6b3'),
+      color: 0xffe6b3,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  flash.scale.set(0.6, 0.6, 1);
+  let muzzleBone = null;
+  model.traverse((obj) => {
+    if (obj.isBone && obj.name === 'muzzle') muzzleBone = obj;
+  });
+  if (muzzleBone) {
+    flash.position.set(0, 0.02, 0);
+    muzzleBone.add(flash);
+  } else {
+    flash.position.set(0.3, 1.15, 0.55);
+    group.add(flash);
+  }
+
+  const fill = new THREE.PointLight(0x9fe2ff, 6.5, 5.2, 2);
+  fill.position.set(0, 2.35, -0.9);
+  group.add(fill);
+
+  const mixer = new THREE.AnimationMixer(model);
+  const actions = {};
+  for (const clip of operatorAsset.animations) {
+    actions[clip.name.toLowerCase()] = mixer.clipAction(clip);
+  }
+  const preferred = ['idle', 'walk', 'sprint', 'aim', 'aimwalk', 'air'];
+  let currentName = '';
+  let currentAction = null;
+  for (const name of preferred) {
+    if (actions[name]) {
+      currentName = name;
+      currentAction = actions[name];
+      currentAction.play();
+      break;
+    }
+  }
+  let playbackRate = 1;
+
+  const fadeTo = (name, duration = 0.16) => {
+    if (name === currentName) return;
+    const next = actions[name];
+    if (!next) return;
+    next.reset();
+    next.enabled = true;
+    next.setEffectiveTimeScale(playbackRate);
+    next.setEffectiveWeight(1);
+    next.fadeIn(duration).play();
+    if (currentAction && currentAction !== next) currentAction.fadeOut(duration);
+    currentAction = next;
+    currentName = name;
+  };
+
+  const state = {
+    group,
+    flash,
+    color,
+    hostile: false,
+    flashTime: 0,
+    visorMaterial,
+    mixer,
+  };
+
+  state.animate = (dt, time, moveSpeed = 0, grounded = true, aiming = false, sprinting = false) => {
+    const speed = clamp(Math.abs(moveSpeed), 0, 20);
+    let target = 'idle';
+    if (!grounded) target = 'air';
+    else if (aiming) target = speed > 0.8 ? 'aimwalk' : 'aim';
+    else if (speed > 6.2 || (sprinting && speed > 1)) target = 'sprint';
+    else if (speed > 0.65) target = 'walk';
+    fadeTo(target);
+
+    let targetRate = 1;
+    if (target === 'sprint') targetRate = clamp(0.8 + speed / 34, 0.95, 1.2);
+    else if (target === 'walk') targetRate = clamp(0.9 + speed / 44, 0.9, 1.1);
+    playbackRate = lerp(playbackRate, targetRate, 1 - Math.exp(-10 * dt));
+    if (currentAction) currentAction.setEffectiveTimeScale(playbackRate);
+    mixer.update(dt);
+
+    if (state.flashTime > 0) {
+      state.flashTime -= dt;
+      flash.material.opacity = clamp(state.flashTime * 9, 0, 1) * 0.95;
+      flash.scale.setScalar(0.6 + (1 - clamp(state.flashTime * 8, 0, 1)) * 0.25);
+    } else {
+      flash.material.opacity = 0;
+    }
+  };
+
+  return state;
+}
+
 export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = false, detail = 1 } = {}) {
+  if (operatorAsset && !hostile) {
+    const operator = buildBlenderOperator({ color });
+    if (operator) return operator;
+  }
   const group = new THREE.Group();
   // Guards share one cohesive suit material so their static parts can be
   // merged into a handful of draw calls; operators keep the detailed kit.
@@ -280,8 +426,10 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
     }),
   );
   flash.scale.set(0.6, 0.6, 1);
-  flash.position.set(0, -0.32, 0.48);
-  rightArm.lowerPivot.add(flash);
+  // Parent the flash to the weapon so it follows the wrist compensation and
+  // stays at the muzzle instead of floating above the hand when aiming.
+  flash.position.set(0, 0.02, 0.44);
+  weapon.add(flash);
 
   group.traverse((obj) => {
     if (obj.isMesh) {
@@ -317,25 +465,44 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
     visorMaterial: visor,
   };
 
-  state.animate = (dt, time, moveSpeed = 0, grounded = true, aiming = false) => {
+  state.animate = (dt, time, moveSpeed = 0, grounded = true, aiming = false, sprinting = false) => {
     const speed = clamp(Math.abs(moveSpeed) / 8, 0, 1.6);
-    const stride = Math.min(time * (5 + speed * 5), 1000);
-    const swing = Math.sin(stride) * (0.12 + speed * 0.7);
-    const bounce = Math.abs(Math.sin(stride)) * speed * 0.035;
+    // Blend from a relaxed walk into a full sprint instead of using a hard
+    // threshold, so the gait never pops when stamina kicks in or out.
+    const run = clamp((speed - 0.62) / 0.55, 0, 1);
+    const strideRate = 7.4 + speed * 6.2 + (sprinting ? 1.4 : 0);
+    const stride = Math.min(time * strideRate, 1000);
+    const phase = Math.sin(stride);
+    // Positive hip rotation sweeps the foot backward; negative swings it
+    // forward. Keep the swing inside a stride that reads at sprint speed.
+    const swing = phase * (0.14 + speed * 0.62);
+    const bounce = Math.abs(phase) * (speed * 0.026 + run * 0.026);
+    // Knee flexion belongs to the recovery half of the cycle: the foot lifts
+    // and folds under the hip while the leg travels forward, then extends for
+    // the next contact. Tying it to the swing sign instead produced a stiff
+    // fencing-lunge pose at speed.
+    const recovery = Math.cos(stride);
+    const kneeL = Math.max(0, -recovery) * (0.35 + run * 0.95);
+    const kneeR = Math.max(0, recovery) * (0.35 + run * 0.95);
     if (grounded) {
       torso.position.y = 1.0 + bounce;
-      torso.rotation.x = speed * 0.09;
-      torso.rotation.z = Math.sin(stride) * speed * 0.03;
+      torso.rotation.x = speed * 0.06 + run * 0.2 + (sprinting ? 0.045 : 0);
+      torso.rotation.y = -phase * run * 0.12;
+      torso.rotation.z = phase * speed * 0.026;
       leftLeg.pivot.rotation.x = swing;
       rightLeg.pivot.rotation.x = -swing;
-      leftLeg.lowerPivot.rotation.x = Math.max(0, -swing) * 0.55;
-      rightLeg.lowerPivot.rotation.x = Math.max(0, swing) * 0.55;
-      leftArm.pivot.rotation.x = -swing * 0.75;
-      rightArm.pivot.rotation.x = swing * 0.45;
-      leftArm.lowerPivot.rotation.x = -Math.max(0, swing) * 0.3;
+      leftLeg.lowerPivot.rotation.x = 0.05 + kneeL;
+      rightLeg.lowerPivot.rotation.x = 0.05 + kneeR;
+      // Arms counter the legs: left drives forward when the left leg goes
+      // back. The free arm needs a real pump and a bent elbow to sell speed.
+      leftArm.pivot.rotation.x = -phase * (0.55 + run * 0.5);
+      leftArm.lowerPivot.rotation.x = -(0.22 + run * 0.78) - Math.max(0, phase) * run * 0.2;
+      rightArm.pivot.rotation.x = phase * (0.18 + run * 0.22);
+      rightArm.lowerPivot.rotation.x = -0.32 - run * 0.5;
     } else {
       torso.position.y = 1.0;
       torso.rotation.x = -0.08;
+      torso.rotation.y = 0;
       torso.rotation.z = 0;
       leftLeg.pivot.rotation.x = -0.5;
       rightLeg.pivot.rotation.x = 0.25;
@@ -343,16 +510,11 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
       rightLeg.lowerPivot.rotation.x = 0.2;
       leftArm.pivot.rotation.x = -0.75;
       rightArm.pivot.rotation.x = -0.2;
+      leftArm.lowerPivot.rotation.x = -0.3;
     }
 
     const idleSway = Math.sin(time * 1.6) * 0.02;
-    if (!aiming) {
-      leftArm.pivot.rotation.z = -0.12 + idleSway;
-      rightArm.pivot.rotation.z = 0.12 - idleSway;
-      rightArm.pivot.rotation.x += -0.25;
-      rightArm.lowerPivot.rotation.x = -0.35;
-      rightArm.lowerPivot.rotation.z = 0.05;
-    } else {
+    if (aiming) {
       const aimPitch = -1.35;
       rightArm.pivot.rotation.x = aimPitch;
       rightArm.pivot.rotation.z = 0.05;
@@ -362,8 +524,36 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
       leftArm.pivot.rotation.z = -0.38;
       leftArm.lowerPivot.rotation.x = -0.65;
       leftArm.lowerPivot.rotation.z = 0.35;
+    } else if (grounded && run > 0.3) {
+      // Sprint carry: the rifle rides at the hip, muzzle level, while the
+      // free arm drives. Elbows flare slightly so the pump reads from the
+      // chase camera, and the right arm stays quiet so the weapon doesn't
+      // flail with every stride.
+      leftArm.pivot.rotation.z = -0.28 + idleSway * 0.4;
+      leftArm.lowerPivot.rotation.z = 0;
+      rightArm.pivot.rotation.x = -0.38 + phase * 0.06;
+      rightArm.pivot.rotation.z = 0.24;
+      rightArm.lowerPivot.rotation.x = -0.98;
+      rightArm.lowerPivot.rotation.z = 0.2;
+    } else {
+      leftArm.pivot.rotation.z = -0.12 + idleSway;
+      leftArm.lowerPivot.rotation.z = 0;
+      rightArm.pivot.rotation.z = 0.12 - idleSway;
+      rightArm.pivot.rotation.x += -0.25;
+      rightArm.lowerPivot.rotation.x = -0.35;
+      rightArm.lowerPivot.rotation.z = 0.05;
     }
-    headGroup.rotation.x = aiming ? -0.08 : Math.sin(time * 0.8) * 0.04;
+    // The rifle is parented to the forearm, so wrist-compensate its pitch to
+    // keep the muzzle level instead of pointing at the sky when the arm
+    // raises to aim or tucks in for a sprint.
+    let muzzlePitch;
+    if (aiming) muzzlePitch = 0.02;
+    else if (grounded && run > 0.3) muzzlePitch = 0.12;
+    else muzzlePitch = 0.3;
+    weapon.rotation.x = -(rightArm.pivot.rotation.x + rightArm.lowerPivot.rotation.x) + muzzlePitch;
+    // Counter the torso lean so the operator keeps their eyes on the street.
+    headGroup.rotation.x = aiming ? -0.08 : -torso.rotation.x * 0.8 + Math.sin(time * 0.8) * 0.03;
+    headGroup.rotation.y = -torso.rotation.y * 0.6;
 
     if (state.flashTime > 0) {
       state.flashTime -= dt;
