@@ -68,6 +68,14 @@
               <input id="nameInput" class="field__input" maxlength="14" value="GHOST" autocomplete="off" spellcheck="false" />
             </label>
 
+            <div class="field operator-select">
+              <span class="field__label">OPERATOR</span>
+              <div class="segmented" id="variantGroup" data-variant-group role="group" aria-label="Operator">
+                <button type="button" data-variant="male" aria-pressed="true" class="is-active">MALE</button>
+                <button type="button" data-variant="female" aria-pressed="false">FEMALE</button>
+              </div>
+            </div>
+
             <button id="hostBtn" class="action-btn action-btn--primary" type="button">
               <span class="action-btn__index">01</span>
               <span class="action-btn__body">
@@ -263,6 +271,13 @@
         </button>
         <div class="settings-grid">
           <div class="setting">
+            <span>OPERATOR</span>
+            <div class="segmented" id="variantGroupPause" data-variant-group role="group" aria-label="Operator">
+              <button type="button" data-variant="male" aria-pressed="true" class="is-active">MALE</button>
+              <button type="button" data-variant="female" aria-pressed="false">FEMALE</button>
+            </div>
+          </div>
+          <div class="setting">
             <span>GRAPHICS</span>
             <div class="segmented" id="qualityGroup">
               <button type="button" data-quality="performance">PERF</button>
@@ -287,6 +302,38 @@
               <button type="button" data-weather="storm" aria-pressed="false">STORM</button>
               <button type="button" data-weather="snow" aria-pressed="false">SNOW</button>
             </div>
+          </div>
+        </div>
+        <div class="upgrade-panel">
+          <div class="upgrade-panel__head">
+            <span>OPERATOR UPGRADES</span>
+            <span class="credits"><small>CREDITS</small> <strong id="creditsValue">0</strong></span>
+          </div>
+          <div class="upgrade-grid" id="upgradeGroup">
+            <button type="button" class="upgrade" data-upgrade="vitality">
+              <span class="upgrade__top"><strong>VITALITY</strong><span class="upgrade-level">LV 0/5</span></span>
+              <span class="upgrade__detail">+25 MAX HEALTH</span>
+              <span class="upgrade-pips"></span>
+              <span class="upgrade__cost upgrade-cost">850 CR</span>
+            </button>
+            <button type="button" class="upgrade" data-upgrade="endurance">
+              <span class="upgrade__top"><strong>ENDURANCE</strong><span class="upgrade-level">LV 0/5</span></span>
+              <span class="upgrade__detail">+20 STAMINA / BOOST</span>
+              <span class="upgrade-pips"></span>
+              <span class="upgrade__cost upgrade-cost">800 CR</span>
+            </button>
+            <button type="button" class="upgrade" data-upgrade="firepower">
+              <span class="upgrade__top"><strong>FIREPOWER</strong><span class="upgrade-level">LV 0/5</span></span>
+              <span class="upgrade__detail">+7 DAMAGE / AMMO</span>
+              <span class="upgrade-pips"></span>
+              <span class="upgrade__cost upgrade-cost">950 CR</span>
+            </button>
+            <button type="button" class="upgrade" data-upgrade="overdrive">
+              <span class="upgrade__top"><strong>OVERDRIVE</strong><span class="upgrade-level">LV 0/5</span></span>
+              <span class="upgrade__detail">+8% TOP SPEED</span>
+              <span class="upgrade-pips"></span>
+              <span class="upgrade__cost upgrade-cost">1,000 CR</span>
+            </button>
           </div>
         </div>
         <div class="pause-panel__controls">
@@ -316,6 +363,7 @@
           <div><span>CACHES</span><strong id="resultCaches">3 SECURED</strong></div>
           <div><span>TIME</span><strong id="resultTime">04:12</strong></div>
           <div><span>SCORE</span><strong id="resultScore">8,500</strong></div>
+          <div><span>CREDITS</span><strong id="resultCredits">+0 CR</strong></div>
         </div>
         <div class="result-next">New contract in <strong id="resultCountdown">12</strong>s</div>
         <button id="redeployBtn" class="action-btn action-btn--primary" type="button">

@@ -1502,6 +1502,13 @@ export function createWorld(scene, renderer) {
     { x: -9, z: 66, rot: -Math.PI / 2, color: 0xa86bff },
     { x: 106, z: -34, rot: Math.PI / 2, color: 0x6bffb8 },
   ];
+  // Light cycles are parked in the same traffic lanes as the cars. They get
+  // their own ids/kind so collision hulls, handling and camera stay distinct.
+  const bikeSpawns = [
+    { x: 15, z: -34, rot: Math.PI / 2, color: 0xff2d95 },
+    { x: -26, z: -12, rot: Math.PI, color: 0x20e6ff },
+    { x: 40, z: 66, rot: -Math.PI / 2, color: 0xa86bff },
+  ];
 
   // Ambient audio-position markers are handled by the game.
   const metro = {
@@ -1605,6 +1612,7 @@ export function createWorld(scene, renderer) {
     colliders,
     shardSites,
     carSpawns,
+    bikeSpawns,
     traffic,
     pedestrians,
     extraction,

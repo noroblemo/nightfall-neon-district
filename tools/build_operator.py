@@ -3,7 +3,9 @@
 
 Run headless:
   /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
-      --python tools/build_operator.py
+      --python tools/build_operator.py -- --variant=male --render
+  /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+      --python tools/build_operator.py -- --variant=female --render
 
 The character is authored facing -Y in Blender, which the glTF exporter maps
 to +Z in Three.js (the game's forward axis). Feet sit on z = 0.
@@ -17,10 +19,99 @@ import sys
 from mathutils import Euler, Matrix, Quaternion, Vector
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(ROOT, "assets", "operator.glb")
 PREVIEW_DIR = os.path.join(ROOT, "previews")
 RENDER = "--render" in sys.argv
 FPS = 30
+
+# The same rig/animation path can produce either silhouette.  Male remains the
+# default so a bare invocation still regenerates the legacy operator.glb.
+VARIANT = "male"
+OUT = None
+for _arg in sys.argv:
+    if _arg.startswith("--variant="):
+        VARIANT = _arg.split("=", 1)[1].strip().lower()
+    elif _arg == "--female":
+        VARIANT = "female"
+    elif _arg == "--male":
+        VARIANT = "male"
+    elif _arg.startswith("--out="):
+        OUT = _arg.split("=", 1)[1].strip()
+if VARIANT not in ("male", "female"):
+    raise SystemExit("unknown operator variant: %r (expected male or female)" % VARIANT)
+if not OUT:
+    OUT = os.path.join(ROOT, "assets", "operator_%s.glb" % VARIANT)
+
+
+# Silhouette parameters.  Joint *names*, mesh names, material names and the
+# bone hierarchy are identical for both variants; only proportions/trim differ.
+PROFILES = {
+    "male": {
+        "shoulder_x": 0.265,
+        "hip_x": 0.118,
+        "pelvis_rx": (0.145, 0.17, 0.165, 0.15),
+        "waist_rx": (0.15, 0.138, 0.148, 0.165),
+        "chest_rx": (0.175, 0.20, 0.218, 0.205, 0.15),
+        "chest_ry": (0.12, 0.135, 0.145, 0.135, 0.105),
+        "chest_plate_w": 0.27,
+        "chest_plate_h": 0.19,
+        "belt_w": 0.30,
+        "hip_pouch_x": 0.155,
+        "helmet_r": (0.158, 0.182, 0.192),
+        "helmet_scale": (1.0, 1.0, 1.0),
+        "chin_r": [(0.075, 0.09), (0.105, 0.13), (0.13, 0.155), (0.142, 0.168)],
+        "visor_r": (0.135, 0.118, 0.072),
+        "ear_x": 0.155,
+        "shoulder_r": 0.072,
+        "pauldron_w": 0.13,
+        "arm_r": (0.065, 0.055),
+        "thigh_r": (0.083, 0.068),
+        "shin_r": (0.066, 0.048),
+        "boot_w": 0.135,
+        "accent": "#35e9ff",
+        "visor": "#63f7ff",
+        "helmet_shell": "#151a26",
+        "cut": "male",
+    },
+    "female": {
+        "shoulder_x": 0.215,
+        "hip_x": 0.138,
+        "pelvis_rx": (0.16, 0.187, 0.18, 0.152),
+        "waist_rx": (0.152, 0.122, 0.132, 0.152),
+        "chest_rx": (0.152, 0.173, 0.186, 0.175, 0.13),
+        "chest_ry": (0.115, 0.143, 0.156, 0.143, 0.10),
+        "chest_plate_w": 0.225,
+        "chest_plate_h": 0.205,
+        "belt_w": 0.325,
+        "hip_pouch_x": 0.175,
+        "helmet_r": (0.143, 0.17, 0.185),
+        "helmet_scale": (0.91, 0.92, 0.96),
+        "chin_r": [(0.068, 0.085), (0.085, 0.118), (0.108, 0.14), (0.122, 0.15)],
+        "visor_r": (0.122, 0.11, 0.068),
+        "ear_x": 0.142,
+        "shoulder_r": 0.06,
+        "pauldron_w": 0.108,
+        "arm_r": (0.056, 0.047),
+        "thigh_r": (0.088, 0.072),
+        "shin_r": (0.06, 0.044),
+        "boot_w": 0.12,
+        "accent": "#ff5cc8",
+        "visor": "#ff87e0",
+        "helmet_shell": "#1a1426",
+        "cut": "female",
+    },
+}
+P = PROFILES[VARIANT]
+
+
+def pv(key):
+    return P[key]
+
+
+def hp(point):
+    """Scale a helmet-surface light point with the current helmet profile."""
+    sx, sy, sz = pv("helmet_scale")
+    x, y, z = point
+    return (x * sx, 0.008 + (y - 0.008) * sy, 1.72 + (z - 1.72) * sz)
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +324,16 @@ DOWN_ROLL = Vector((0, 1, 0))
 FWD_ROLL = Vector((0, 0, -1))
 
 
+def rig_point(name, point):
+    """Profile-scaled joint position; joint names/hierarchy stay identical."""
+    x, y, z = point
+    if name == "muzzle" or "arm" in name or name.startswith("hand_"):
+        return (x * pv("shoulder_x") / 0.265, y, z)
+    if name.startswith(("thigh_", "shin_", "foot_")):
+        return (x * pv("hip_x") / 0.118, y, z)
+    return point
+
+
 def build_rig():
     arm_data = bpy.data.armatures.new("NF_OperatorRig")
     rig = bpy.data.objects.new("NF_OperatorRig", arm_data)
@@ -242,8 +343,8 @@ def build_rig():
     made = {}
     for name, head, tail, parent, axis in BONES:
         bone = arm_data.edit_bones.new(name)
-        bone.head = head
-        bone.tail = tail
+        bone.head = rig_point(name, head)
+        bone.tail = rig_point(name, tail)
         bone.use_connect = False
         if axis == "up":
             bone.align_roll(UP_ROLL)
@@ -268,45 +369,53 @@ def build_operator(rig):
     armor = material("NF_Armor", "#596375", roughness=0.45, metallic=0.45, emission="#0b111a", emission_strength=0.25)
     dark = material("NF_Rubber", "#11141b", roughness=0.8, metallic=0.08)
     metal = material("NF_Metal", "#8b98ad", roughness=0.32, metallic=0.8)
-    helmet_shell = material("NF_Helmet", "#151a26", roughness=0.24, metallic=0.55, emission="#0a1220", emission_strength=0.35)
+    helmet_shell = material("NF_Helmet", pv("helmet_shell"), roughness=0.24, metallic=0.55, emission="#0a1220", emission_strength=0.35)
     lens = material("NF_Lens", "#04070d", roughness=0.14, metallic=0.6, emission="#041018", emission_strength=0.3)
-    accent = material("NF_Accent", "#0a2a31", roughness=0.35, metallic=0.3, emission="#35e9ff", emission_strength=1.6)
-    visor = material("NF_Visor", "#07151b", roughness=0.08, metallic=0.72, emission="#63f7ff", emission_strength=2.0)
+    accent = material("NF_Accent", "#0a2a31", roughness=0.35, metallic=0.3, emission=pv("accent"), emission_strength=1.6)
+    visor = material("NF_Visor", "#07151b", roughness=0.08, metallic=0.72, emission=pv("visor"), emission_strength=2.0)
 
     parts = []
 
     # Lean athletic torso built from lofted rings: broad shoulders, narrow
     # waist, and a separate pelvis so the spine can bend naturally.
+    pelvis_rx = pv("pelvis_rx")
+    waist_rx = pv("waist_rx")
+    chest_rx = pv("chest_rx")
+    chest_ry = pv("chest_ry")
     parts.append(loft("pelvis", [
-        (0.88, 0.145, 0.10, 0.0),
-        (0.95, 0.17, 0.12, 0.005),
-        (1.02, 0.165, 0.115, 0.0),
-        (1.08, 0.15, 0.105, 0.0),
+        (0.88, pelvis_rx[0], 0.10, 0.0),
+        (0.95, pelvis_rx[1], 0.12, 0.005),
+        (1.02, pelvis_rx[2], 0.115, 0.0),
+        (1.08, pelvis_rx[3], 0.105, 0.0),
     ], pants, "hips"))
     parts.append(loft("waist", [
-        (1.07, 0.15, 0.105, 0.0),
-        (1.14, 0.138, 0.096, 0.0),
-        (1.20, 0.148, 0.102, 0.0),
-        (1.25, 0.165, 0.112, 0.0),
+        (1.07, waist_rx[0], 0.105, 0.0),
+        (1.14, waist_rx[1], 0.096, 0.0),
+        (1.20, waist_rx[2], 0.102, 0.0),
+        (1.25, waist_rx[3], 0.112, 0.0),
     ], pants, "spine"))
     parts.append(loft("chest", [
-        (1.24, 0.175, 0.12, 0.0),
-        (1.32, 0.20, 0.135, -0.005),
-        (1.39, 0.218, 0.145, 0.0),
-        (1.45, 0.205, 0.135, 0.005),
-        (1.49, 0.15, 0.105, 0.0),
+        (1.24, chest_rx[0], chest_ry[0], 0.0),
+        (1.32, chest_rx[1], chest_ry[1], -0.005),
+        (1.39, chest_rx[2], chest_ry[2], 0.0),
+        (1.45, chest_rx[3], chest_ry[3], 0.005),
+        (1.49, chest_rx[4], chest_ry[4], 0.0),
     ], suit, "chest"))
 
     # chest armour and rig
-    parts.append(cube("chest_plate", (0.27, 0.055, 0.19), (0, -0.14, 1.36), armor, "chest", bevel_width=0.025))
+    parts.append(cube("chest_plate", (pv("chest_plate_w"), 0.055, pv("chest_plate_h")), (0, -0.14, 1.36), armor, "chest", bevel_width=0.025))
     parts.append(cube("chest_bar", (0.10, 0.014, 0.02), (0, -0.171, 1.43), accent, "chest", bevel_width=0.004))
     parts.append(cube("zip_light", (0.013, 0.012, 0.10), (0, -0.171, 1.35), accent, "chest", bevel_width=0.003))
+    if pv("cut") == "female":
+        # V-shaped chest trim reads as a different armour cut at a glance.
+        for side in (-1, 1):
+            parts.append(capsule(f"chest_v_{side}", (0, -0.174, 1.40), (side * 0.083, -0.163, 1.29), 0.005, 0.005, accent, "chest", vertices=10))
     for side in (-1, 1):
         parts.append(cube(f"rig_strap_{side}", (0.035, 0.025, 0.30), (side * 0.095, -0.15, 1.31), dark, "chest", bevel_width=0.007))
         parts.append(cube(f"pouch_{side}", (0.085, 0.055, 0.10), (side * 0.095, -0.155, 1.19), armor, "chest", bevel_width=0.014))
-    parts.append(cube("belt", (0.30, 0.19, 0.07), (0, 0, 1.04), armor, "hips", bevel_width=0.018))
+    parts.append(cube("belt", (pv("belt_w"), 0.19, 0.07), (0, 0, 1.04), armor, "hips", bevel_width=0.018))
     for side in (-1, 1):
-        parts.append(cube(f"hip_pouch_{side}", (0.08, 0.065, 0.12), (side * 0.155, -0.02, 1.0), dark, "hips", bevel_width=0.014))
+        parts.append(cube(f"hip_pouch_{side}", (0.08, 0.065, 0.12), (side * pv("hip_pouch_x"), -0.02, 1.0), dark, "hips", bevel_width=0.014))
     parts.append(cube("buckle", (0.06, 0.028, 0.045), (0, -0.115, 1.04), metal, "hips", bevel_width=0.007))
 
     # backpack
@@ -326,14 +435,24 @@ def build_operator(rig):
 
     # Tron-style full-face helmet: dark glossy shell, wraparound lens, and
     # thin player-coloured light lines over the crown, brow, visor and chin.
-    parts.append(sphere("helmet_shell", (0.158, 0.182, 0.192), (0, 0.008, 1.72), helmet_shell, "head", segments=36, rings=24))
+    parts.append(sphere("helmet_shell", pv("helmet_r"), (0, 0.008, 1.72), helmet_shell, "head", segments=36, rings=24))
+    chin_r = pv("chin_r")
     parts.append(loft("helmet_chin", [
-        (1.58, 0.075, 0.09, -0.045),
-        (1.61, 0.105, 0.13, -0.055),
-        (1.66, 0.13, 0.155, -0.035),
-        (1.70, 0.142, 0.168, -0.01),
+        (1.58, chin_r[0][0], chin_r[0][1], -0.045),
+        (1.61, chin_r[1][0], chin_r[1][1], -0.055),
+        (1.66, chin_r[2][0], chin_r[2][1], -0.035),
+        (1.70, chin_r[3][0], chin_r[3][1], -0.01),
     ], helmet_shell, "head", segments=28))
-    parts.append(sphere("visor_lens", (0.135, 0.118, 0.072), (0, -0.07, 1.72), lens, "head", segments=48, rings=32))
+    parts.append(sphere("visor_lens", pv("visor_r"), (0, -0.07, 1.72), lens, "head", segments=48, rings=32))
+    if pv("cut") == "female":
+        # Low bundled crest at the back of the shell gives the female helmet a
+        # distinct profile from the male crown runner.
+        for p1, p2, r in (
+            ((0, 0.14, 1.80), (0, 0.205, 1.74), 0.034),
+            ((0, 0.205, 1.74), (0, 0.235, 1.64), 0.03),
+            ((0, 0.235, 1.64), (0, 0.225, 1.55), 0.022),
+        ):
+            parts.append(capsule("helmet_crest", hp(p1), hp(p2), r, r, helmet_shell, "head", vertices=12))
 
     # brow light wraps around the front of the shell
     for p1, p2, r in (
@@ -343,7 +462,7 @@ def build_operator(rig):
         ((-0.14, -0.062, 1.762), (-0.108, -0.122, 1.772), 0.0055),
         ((0.108, -0.122, 1.772), (0.14, -0.062, 1.762), 0.0055),
     ):
-        parts.append(capsule("brow_light", p1, p2, r, r, accent, "head"))
+        parts.append(capsule("brow_light", hp(p1), hp(p2), r, r, accent, "head"))
 
     # crown light running front-to-back
     for p1, p2 in (
@@ -355,7 +474,7 @@ def build_operator(rig):
         ((0, 0.06, 1.902), (0, 0.13, 1.865)),
         ((0, 0.13, 1.865), (0, 0.18, 1.80)),
     ):
-        parts.append(capsule("crest_light", p1, p2, 0.0065, 0.0065, accent, "head"))
+        parts.append(capsule("crest_light", hp(p1), hp(p2), 0.0065, 0.0065, accent, "head"))
 
     # visor scan line follows the curved lens
     for p1, p2 in (
@@ -364,55 +483,61 @@ def build_operator(rig):
         ((-0.07, -0.174, 1.724), (0, -0.19, 1.724)),
         ((-0.12, -0.127, 1.724), (-0.07, -0.174, 1.724)),
     ):
-        parts.append(capsule("visor_light", p1, p2, 0.006, 0.006, visor, "head"))
+        parts.append(capsule("visor_light", hp(p1), hp(p2), 0.006, 0.006, visor, "head"))
 
     # chin light
     for side in (-1, 1):
-        parts.append(capsule(f"chin_light_{side}", (0, -0.194, 1.635), (side * 0.05, -0.162, 1.652), 0.005, 0.005, accent, "head"))
+        parts.append(capsule(f"chin_light_{side}", hp((0, -0.194, 1.635)), hp((side * 0.05, -0.162, 1.652)), 0.005, 0.005, accent, "head"))
 
     # ear pods with glowing rims
     for side in (-1, 1):
-        parts.append(cylinder(f"ear_pod_{side}", 0.048, 0.022, (side * 0.155, 0.01, 1.72), dark, "head", rot=(0, math.pi / 2, 0), vertices=18))
-        parts.append(torus(f"ear_rim_{side}", 0.028, 0.005, (side * 0.168, 0.01, 1.72), accent, "head", rot=(0, math.pi / 2, 0)))
+        ear_x = pv("ear_x")
+        parts.append(cylinder(f"ear_pod_{side}", 0.048, 0.022, (side * ear_x, 0.01, 1.72), dark, "head", rot=(0, math.pi / 2, 0), vertices=18))
+        parts.append(torus(f"ear_rim_{side}", 0.028, 0.005, (side * (ear_x + 0.013), 0.01, 1.72), accent, "head", rot=(0, math.pi / 2, 0)))
 
     # arms
     for side, suffix in ((-1, "L"), (1, "R")):
-        ux = side * 0.265
-        parts.append(sphere(f"shoulder_{suffix}", (0.072, 0.072, 0.072), (ux, 0, 1.435), suit, f"upper_arm_{suffix}", segments=16, rings=10))
-        parts.append(capsule(f"upper_arm_{suffix}", (ux, 0, 1.43), (ux, 0, 1.15), 0.065, 0.055, suit, f"upper_arm_{suffix}"))
-        parts.append(cube(f"pauldron_{suffix}", (0.13, 0.145, 0.07), (side * 0.278, 0, 1.458), armor, f"upper_arm_{suffix}", rot=(0, side * math.radians(10), 0), bevel_width=0.02))
+        ux = side * pv("shoulder_x")
+        sr = pv("shoulder_r")
+        arm_r = pv("arm_r")
+        parts.append(sphere(f"shoulder_{suffix}", (sr, sr, sr), (ux, 0, 1.435), suit, f"upper_arm_{suffix}", segments=16, rings=10))
+        parts.append(capsule(f"upper_arm_{suffix}", (ux, 0, 1.43), (ux, 0, 1.15), arm_r[0], arm_r[1], suit, f"upper_arm_{suffix}"))
+        parts.append(cube(f"pauldron_{suffix}", (pv("pauldron_w"), 0.145, 0.07), (side * (pv("shoulder_x") + 0.013), 0, 1.458), armor, f"upper_arm_{suffix}", rot=(0, side * math.radians(10), 0), bevel_width=0.02))
         parts.append(sphere(f"elbow_{suffix}", (0.06, 0.06, 0.06), (ux, -0.004, 1.16), armor, f"forearm_{suffix}", segments=16, rings=10))
         parts.append(capsule(f"forearm_{suffix}", (ux, 0, 1.16), (ux, -0.015, 0.92), 0.054, 0.045, suit, f"forearm_{suffix}"))
         parts.append(cube(f"bracer_{suffix}", (0.09, 0.085, 0.16), (ux, -0.01, 1.03), armor, f"forearm_{suffix}", bevel_width=0.018))
-        parts.append(cube(f"arm_light_{suffix}", (0.014, 0.012, 0.11), (side * (0.265 + 0.052), -0.01, 1.03), accent, f"forearm_{suffix}", bevel_width=0.003))
+        parts.append(cube(f"arm_light_{suffix}", (0.014, 0.012, 0.11), (side * (pv("shoulder_x") + 0.052), -0.01, 1.03), accent, f"forearm_{suffix}", bevel_width=0.003))
         parts.append(sphere(f"glove_{suffix}", (0.06, 0.07, 0.075), (ux, -0.02, 0.84), dark, f"hand_{suffix}", segments=16, rings=10))
         parts.append(cube(f"knuckle_{suffix}", (0.065, 0.03, 0.05), (ux, -0.062, 0.845), armor, f"hand_{suffix}", bevel_width=0.01))
         parts.append(torus(f"cuff_{suffix}", 0.052, 0.012, (ux, -0.01, 0.905), accent, f"forearm_{suffix}"))
 
     # legs
     for side, suffix in ((-1, "L"), (1, "R")):
-        x = side * 0.118
-        parts.append(capsule(f"thigh_{suffix}", (x, 0, 0.96), (x, 0, 0.53), 0.083, 0.068, pants, f"thigh_{suffix}"))
+        x = side * pv("hip_x")
+        thigh_r = pv("thigh_r")
+        shin_r = pv("shin_r")
+        parts.append(capsule(f"thigh_{suffix}", (x, 0, 0.96), (x, 0, 0.53), thigh_r[0], thigh_r[1], pants, f"thigh_{suffix}"))
         parts.append(cube(f"thigh_plate_{suffix}", (0.115, 0.05, 0.20), (x, -0.074, 0.78), armor, f"thigh_{suffix}", bevel_width=0.018))
-        parts.append(cube(f"thigh_light_{suffix}", (0.015, 0.012, 0.09), (side * (0.118 + 0.07), -0.03, 0.79), accent, f"thigh_{suffix}", bevel_width=0.003))
-        parts.append(cube(f"cargo_{suffix}", (0.03, 0.075, 0.11), (side * 0.192, -0.005, 0.75), pants, f"thigh_{suffix}", bevel_width=0.008))
+        parts.append(cube(f"thigh_light_{suffix}", (0.015, 0.012, 0.09), (side * (pv("hip_x") + 0.07), -0.03, 0.79), accent, f"thigh_{suffix}", bevel_width=0.003))
+        parts.append(cube(f"cargo_{suffix}", (0.03, 0.075, 0.11), (side * (pv("hip_x") + 0.074), -0.005, 0.75), pants, f"thigh_{suffix}", bevel_width=0.008))
         parts.append(sphere(f"knee_{suffix}", (0.082, 0.082, 0.082), (x, -0.012, 0.55), armor, f"shin_{suffix}", segments=16, rings=10))
         parts.append(cube(f"knee_plate_{suffix}", (0.085, 0.035, 0.08), (x, -0.062, 0.55), armor, f"shin_{suffix}", bevel_width=0.012))
-        parts.append(capsule(f"shin_{suffix}", (x, 0, 0.565), (x, 0, 0.15), 0.066, 0.048, pants, f"shin_{suffix}"))
+        parts.append(capsule(f"shin_{suffix}", (x, 0, 0.565), (x, 0, 0.15), shin_r[0], shin_r[1], pants, f"shin_{suffix}"))
         parts.append(cube(f"shin_guard_{suffix}", (0.09, 0.04, 0.24), (x, -0.055, 0.35), armor, f"shin_{suffix}", bevel_width=0.014))
-        parts.append(cube(f"shin_light_{suffix}", (0.014, 0.012, 0.10), (side * (0.118 + 0.052), -0.03, 0.34), accent, f"shin_{suffix}", bevel_width=0.003))
+        parts.append(cube(f"shin_light_{suffix}", (0.014, 0.012, 0.10), (side * (pv("hip_x") + 0.052), -0.03, 0.34), accent, f"shin_{suffix}", bevel_width=0.003))
         parts.append(cube(f"ankle_cuff_{suffix}", (0.105, 0.13, 0.08), (x, -0.01, 0.17), armor, f"shin_{suffix}", bevel_width=0.016))
-        parts.append(cube(f"boot_{suffix}", (0.135, 0.29, 0.11), (x, -0.06, 0.08), pants, f"foot_{suffix}", bevel_width=0.024))
-        parts.append(cube(f"sole_{suffix}", (0.145, 0.31, 0.03), (x, -0.065, 0.022), dark, f"foot_{suffix}", bevel_width=0.008))
+        parts.append(cube(f"boot_{suffix}", (pv("boot_w"), 0.29, 0.11), (x, -0.06, 0.08), pants, f"foot_{suffix}", bevel_width=0.024))
+        parts.append(cube(f"sole_{suffix}", (pv("boot_w") + 0.01, 0.31, 0.03), (x, -0.065, 0.022), dark, f"foot_{suffix}", bevel_width=0.008))
         parts.append(cube(f"toecap_{suffix}", (0.12, 0.09, 0.065), (x, -0.19, 0.07), armor, f"foot_{suffix}", bevel_width=0.014))
-        parts.append(cube(f"boot_light_{suffix}", (0.013, 0.08, 0.016), (side * (0.118 + 0.07), -0.10, 0.075), accent, f"foot_{suffix}", bevel_width=0.003))
+        parts.append(cube(f"boot_light_{suffix}", (0.013, 0.08, 0.016), (side * (pv("hip_x") + 0.07), -0.10, 0.075), accent, f"foot_{suffix}", bevel_width=0.003))
         if side == 1:
-            parts.append(cube("holster", (0.06, 0.075, 0.16), (0.19, -0.02, 0.77), dark, "thigh_R", bevel_width=0.012))
-            parts.append(cube("holster_grip", (0.04, 0.04, 0.06), (0.19, -0.055, 0.86), metal, "thigh_R", rot=(math.radians(-18), 0, 0), bevel_width=0.008))
-            parts.append(cube("holster_light", (0.012, 0.012, 0.06), (0.19, -0.062, 0.75), accent, "thigh_R", bevel_width=0.002))
+            hx = pv("hip_x") + 0.072
+            parts.append(cube("holster", (0.06, 0.075, 0.16), (hx, -0.02, 0.77), dark, "thigh_R", bevel_width=0.012))
+            parts.append(cube("holster_grip", (0.04, 0.04, 0.06), (hx, -0.055, 0.86), metal, "thigh_R", rot=(math.radians(-18), 0, 0), bevel_width=0.008))
+            parts.append(cube("holster_light", (0.012, 0.012, 0.06), (hx, -0.062, 0.75), accent, "thigh_R", bevel_width=0.002))
 
     # rifle, held in the right hand, barrel forward (-Y)
-    gx, gy, gz = 0.33, -0.18, 0.9
+    gx, gy, gz = pv("shoulder_x") + 0.065, -0.18, 0.9
     parts.append(cube("rifle_body", (0.07, 0.34, 0.115), (gx, gy, gz), dark, "hand_R", bevel_width=0.012))
     parts.append(cube("rifle_rail", (0.05, 0.28, 0.022), (gx, gy - 0.01, gz + 0.07), metal, "hand_R", bevel_width=0.004))
     parts.append(cylinder("rifle_barrel", 0.022, 0.3, (gx, gy - 0.31, gz + 0.015), metal, "hand_R", rot=(math.pi / 2, 0, 0), vertices=12))
@@ -776,6 +901,31 @@ def air_pose(t):
     }
 
 
+def ride_pose(t):
+    """Seated light-cycle pose: forward lean, bent knees, handlebar grip."""
+    bob = math.sin(t * math.tau)
+    lean = math.sin(t * math.tau - 0.6)
+    sway = math.sin(t * math.tau * 2)
+    upper_l = -1.22 - 0.01 * bob
+    fore_l = -0.52 - 0.01 * bob
+    upper_r = -1.20 - 0.01 * bob
+    fore_r = -0.54 - 0.01 * bob
+    return {
+        "hips": (0.05 + 0.005 * bob, 0, 0.012 * lean),
+        "spine": (0.10 + 0.005 * bob, 0, 0),
+        "chest": (0.16 + 0.008 * lean, 0.02 + 0.015 * lean, 0.008 * sway),
+        "head": (-0.18 - 0.01 * bob, -0.02 - 0.02 * lean, 0),
+        "thigh_L": (-1.16 - 0.01 * bob, 0.04, 0.05), "shin_L": (1.62 + 0.01 * bob, 0, 0),
+        "foot_L": (-0.30, 0, 0),
+        "thigh_R": (-1.14 - 0.01 * bob, -0.04, -0.05), "shin_R": (1.60 + 0.01 * bob, 0, 0),
+        "foot_R": (-0.30, 0, 0),
+        "upper_arm_L": (upper_l, 0.06, -0.14), "forearm_L": (fore_l, 0, 0.04),
+        "upper_arm_R": (upper_r, -0.06, 0.12), "forearm_R": (fore_r, 0, 0.04),
+        "hand_R": (gun_hand(upper_r, fore_r), 0, 0),
+        "hips_lift": -0.15 + 0.013 * bob,
+    }
+
+
 # ---------------------------------------------------------------------------
 # export
 # ---------------------------------------------------------------------------
@@ -862,7 +1012,7 @@ def setup_preview():
     return cam
 
 
-def render_frames(action_name, frames):
+def render_frames(action_name, frames, prefix=None):
     scene = bpy.context.scene
     rig = bpy.data.objects["NF_OperatorRig"]
     action = bpy.data.actions[action_name]
@@ -871,9 +1021,10 @@ def render_frames(action_name, frames):
         rig.animation_data.action_slot = action.slots[0]
     os.makedirs(PREVIEW_DIR, exist_ok=True)
     paths = []
+    tag = f"{prefix}_" if prefix else ""
     for frame in frames:
         scene.frame_set(frame)
-        path = os.path.join(PREVIEW_DIR, f"{action_name.lower()}_{frame:02d}.png")
+        path = os.path.join(PREVIEW_DIR, f"{tag}{action_name.lower()}_{frame:02d}.png")
         scene.render.filepath = path
         bpy.ops.render.render(write_still=True)
         paths.append(path)
@@ -916,22 +1067,18 @@ def main():
     build_action(rig, "Aim", 60, lambda t: aim_base(t, False))
     build_action(rig, "AimWalk", 18, lambda t: aim_base(t, True))
     build_action(rig, "Air", 30, air_pose)
+    build_action(rig, "Ride", 20, ride_pose)
 
     export_glb(rig, body)
-    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT, "assets", "operator.blend"))
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT, "assets", f"operator_{VARIANT}.blend"))
 
     if RENDER:
         setup_preview()
-        paths = []
-        for action_name, frames in (
-            ("Sprint", [0, 3, 6, 9]),
-            ("Walk", [0, 4, 9, 13]),
-            ("Aim", [0]),
-            ("Idle", [0]),
-        ):
-            paths.extend(render_frames(action_name, frames))
-        contact_sheet(paths, os.path.join(PREVIEW_DIR, "operator_contact.png"))
-        print("PREVIEWED", os.path.join(PREVIEW_DIR, "operator_contact.png"))
+        paths = render_frames("Idle", [0], prefix=VARIANT)
+        paths += render_frames("Ride", [0, 10], prefix=VARIANT)
+        sheet = os.path.join(PREVIEW_DIR, f"operator_{VARIANT}_contact.png")
+        contact_sheet(paths, sheet)
+        print("PREVIEWED", sheet)
 
 
 main()

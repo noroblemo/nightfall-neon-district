@@ -11,8 +11,9 @@ A browser-based co-op open-world action game with Forza-style arcade driving, bu
 - **Open world** — a procedural neon city (~436m across) with buildings, plaza, metro landmarks, dynamic lights, bloom post-processing and a finished, collidable perimeter.
 - **Switchable weather** — rain, clear skies, dense fog, electric storms and snow, with smooth transitions and a distinct soundscape for each: rain patter, city air, foghorns, rolling thunder and icy wind. Press `V` in-game or use the **WEATHER** toggle in the pause menu (the host picks for the room).
 - **Adaptive audio** — an original synthwave score during contracts, plus positional foley for weapons, footsteps, vehicles and pickups. `M` or the pause-menu button mutes everything.
-- **Contract ladder** — six escalating heist contracts, from GHOST PROTOCOL to LAST SIGNAL, with more caches, tighter security and longer extractions each run. Clear one and the next begins automatically.
-- **Driving** — arcade supercar physics with boost, handbrake drifts, tire trails, chase camera and engine audio. Oriented car hulls stop both vehicles and pedestrians from cutting through parked or moving traffic.
+- **Contract ladder** — nine escalating contracts, from GHOST PROTOCOL through timed circuits, courier runs and bounties to LAST SIGNAL. Clear one and the next begins automatically.
+- **Driving** — arcade supercar physics and Tron-style light cycles with boost, handbrake drifts, tire trails, chase cameras and engine audio. Oriented car/bike hulls stop vehicles and pedestrians from cutting through parked or moving traffic.
+- **Operator progression** — choose a male or female Blender-rigged operator on the landing screen or in Options, then spend credits earned from contracts on Vitality, Endurance, Firepower and Overdrive upgrades. Selections and upgrades persist locally and sync to co-op partners.
 - **Combat** — third-person over-shoulder shooting with tracers, hitmarkers, reloads, guards and scout drones with detection/leash AI.
 - **Online multiplayer** — room codes, up to 4 operatives per room on the WebSocket relay (2 on P2P fallback). Host-authoritative mission/enemy simulation with client prediction for movement.
 - **Performance** — instanced traffic and static geometry merges, partial effect-buffer uploads, dynamic resolution scaling with hysteresis, quality presets and ACES tone mapping; targets 60 FPS on laptops.
@@ -36,20 +37,27 @@ Open `http://localhost:3000` and click **CONTINUE SOLO**, or host/join a room fo
 
 ## Operator asset
 
-The playable operative is a rigged Blender GLB with `Idle`, `Walk`, `Sprint`, `Aim`, `AimWalk` and `Air` clips. It has a lean tactical suit, a Tron-style helmet with player-coloured light lines, and a thigh holster. Rebuild it with:
+Two selectable operatives and the light cycle are rigged Blender GLBs:
+
+- `assets/operator_male.glb` / `assets/operator_female.glb` — lean tactical suits, Tron-style helmets with player-coloured light lines, and a thigh holster. Both carry `Idle`, `Walk`, `Sprint`, `Aim`, `AimWalk`, `Air` and the seated `Ride` clip.
+- `assets/bike.glb` — a 2.5m light cycle with `wheel_front` / `wheel_rear` steer-and-roll pivots and `Idle`, `Ride`, `Boost` chassis animations.
+
+Rebuild them with:
 
 ```bash
 /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
   --python tools/build_operator.py -- --render
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+  --python tools/build_bike.py -- --render
 ```
 
-The build writes `assets/operator.glb` and refreshes the previews in `previews/`. Bump the `?v=` query on `OPERATOR_ASSET_URL` in `src/main.js` after rebuilding so browsers and CDNs fetch the new GLB. If the asset is missing or fails to load, the game falls back to the procedural operator.
+`tools/build_operator.py` exports both variants (and keeps `assets/operator.glb` as a male alias). Bump `ASSET_VERSION` in `src/main.js` after rebuilding so browsers and CDNs fetch the new GLBs. Each asset loads independently; missing files fall back to the procedural operator/bike without breaking gameplay.
 
 ## Audio and contracts
 
 The soundtrack is fully procedural WebAudio: a 16-bar, 84 BPM D-minor night-drive loop with a weather-adaptive lowpass and dotted-eighth delay. All five weather presets have their own always-running ambience beds with smooth crossfades and unique incidental events (rain drips, clear-sky car passes, foghorns, thunder and ice chimes). A crossfaded 6-second noise buffer, held gain ramps, and a musical clock that keeps running while the music is faded out keep loops and pause/resume free of clicks or restart bursts.
 
-The six contracts are distinct missions, not scaled copies of one objective:
+The nine contracts are distinct missions, not scaled copies of one objective:
 
 1. **GHOST PROTOCOL** — stealth cache breach.
 2. **BLACKOUT RUN** — cut three grid nodes in order.
@@ -57,6 +65,9 @@ The six contracts are distinct missions, not scaled copies of one objective:
 4. **SILENT AUCTION** — purge security before the lots unlock.
 5. **ZERO HOUR** — survive a timed security sweep, then breach caches.
 6. **LAST SIGNAL** — hold inside signal relays until each upload completes.
+7. **NEON CIRCUIT** — a checkpoint time trial on foot is not allowed: take a car or light cycle and hit the gates in order. Running out of time forfeits the bonus and calls in backup.
+8. **DATA COURIER** — collect the package and deliver it to a chain of ordered drops across the grid.
+9. **BOUNTY HUNT** — neutralize five marked security units, then secure the bounty files. The clock protects your completion bonus.
 
 The host remains authoritative for mission state, weather and enemy spawns in co-op.
 

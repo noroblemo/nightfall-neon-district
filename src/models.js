@@ -6,12 +6,25 @@ import { createGlowSpriteTexture } from './textures.js';
 import { clamp, lerp } from './utils.js';
 
 const bodyMaterialCache = new Map();
+const operatorAssets = { male: null, female: null };
 let operatorAsset = null;
+let bikeAsset = null;
 
-// The Blender-authored operator is optional: if the GLB cannot be fetched the
-// game falls back to the procedural rig below without changing gameplay.
+// The Blender-authored operators/bike are optional: if a GLB cannot be fetched
+// the game falls back to the procedural rigs below without changing gameplay.
+export function setOperatorAssets({ male = null, female = null } = {}) {
+  operatorAssets.male = male?.scene ? male : null;
+  operatorAssets.female = female?.scene ? female : null;
+  operatorAsset = operatorAssets.male;
+}
+
 export function setOperatorAsset(gltf) {
   operatorAsset = gltf && gltf.scene ? gltf : null;
+  operatorAssets.male = operatorAsset;
+}
+
+export function setBikeAsset(gltf) {
+  bikeAsset = gltf && gltf.scene ? gltf : null;
 }
 
 
@@ -69,9 +82,11 @@ function mergeDirectMeshes(container) {
   }
 }
 
-function buildBlenderOperator({ color = 0x35e9ff } = {}) {
+function buildBlenderOperator({ color = 0x35e9ff, variant = 'male' } = {}) {
+  const asset = operatorAssets[variant] || operatorAsset;
+  if (!asset?.scene) return null;
   const group = new THREE.Group();
-  const model = cloneSkeleton(operatorAsset.scene);
+  const model = cloneSkeleton(asset.scene);
   let visorMaterial = null;
 
   model.traverse((obj) => {
@@ -100,7 +115,7 @@ function buildBlenderOperator({ color = 0x35e9ff } = {}) {
   });
 
   group.add(model);
-  if (!operatorAsset.animations?.length) return null;
+  if (!asset.animations?.length) return null;
 
   // Muzzle flash rides the exported weapon bone so it tracks the sprint carry
   // and the aim pose instead of hovering at a fixed offset.
@@ -134,7 +149,7 @@ function buildBlenderOperator({ color = 0x35e9ff } = {}) {
 
   const mixer = new THREE.AnimationMixer(model);
   const actions = {};
-  for (const clip of operatorAsset.animations) {
+  for (const clip of asset.animations) {
     actions[clip.name.toLowerCase()] = mixer.clipAction(clip);
   }
   const preferred = ['idle', 'walk', 'sprint', 'aim', 'aimwalk', 'air'];
@@ -174,10 +189,11 @@ function buildBlenderOperator({ color = 0x35e9ff } = {}) {
     mixer,
   };
 
-  state.animate = (dt, time, moveSpeed = 0, grounded = true, aiming = false, sprinting = false) => {
+  state.animate = (dt, time, moveSpeed = 0, grounded = true, aiming = false, sprinting = false, riding = false) => {
     const speed = clamp(Math.abs(moveSpeed), 0, 20);
     let target = 'idle';
-    if (!grounded) target = 'air';
+    if (riding && actions.ride) target = 'ride';
+    else if (!grounded) target = 'air';
     else if (aiming) target = speed > 0.8 ? 'aimwalk' : 'aim';
     else if (speed > 6.2 || (sprinting && speed > 1)) target = 'sprint';
     else if (speed > 0.65) target = 'walk';
@@ -202,9 +218,9 @@ function buildBlenderOperator({ color = 0x35e9ff } = {}) {
   return state;
 }
 
-export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = false, detail = 1 } = {}) {
-  if (operatorAsset && !hostile) {
-    const operator = buildBlenderOperator({ color });
+export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = false, detail = 1, variant = 'male' } = {}) {
+  if (!hostile && (operatorAssets[variant] || operatorAsset)) {
+    const operator = buildBlenderOperator({ color, variant });
     if (operator) return operator;
   }
   const group = new THREE.Group();
@@ -465,7 +481,7 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
     visorMaterial: visor,
   };
 
-  state.animate = (dt, time, moveSpeed = 0, grounded = true, aiming = false, sprinting = false) => {
+  state.animate = (dt, time, moveSpeed = 0, grounded = true, aiming = false, sprinting = false, riding = false) => {
     const speed = clamp(Math.abs(moveSpeed) / 8, 0, 1.6);
     // Blend from a relaxed walk into a full sprint instead of using a hard
     // threshold, so the gait never pops when stamina kicks in or out.
@@ -484,7 +500,22 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
     const recovery = Math.cos(stride);
     const kneeL = Math.max(0, -recovery) * (0.35 + run * 0.95);
     const kneeR = Math.max(0, recovery) * (0.35 + run * 0.95);
-    if (grounded) {
+    if (riding) {
+      // Seated light-cycle pose: hips low, knees folded around the tank and
+      // the spine pitched forward. Used when the Blender Ride clip is absent.
+      torso.position.y = 0.88 + Math.sin(time * 5) * 0.012;
+      torso.rotation.x = 0.3;
+      torso.rotation.y = 0;
+      torso.rotation.z = 0;
+      leftLeg.pivot.rotation.x = -0.95;
+      rightLeg.pivot.rotation.x = -0.95;
+      leftLeg.lowerPivot.rotation.x = 1.35;
+      rightLeg.lowerPivot.rotation.x = 1.35;
+      leftArm.pivot.rotation.x = -1.15;
+      rightArm.pivot.rotation.x = -1.2;
+      leftArm.lowerPivot.rotation.x = -0.5;
+      rightArm.lowerPivot.rotation.x = -0.5;
+    } else if (grounded) {
       torso.position.y = 1.0 + bounce;
       torso.rotation.x = speed * 0.06 + run * 0.2 + (sprinting ? 0.045 : 0);
       torso.rotation.y = -phase * run * 0.12;
@@ -514,7 +545,12 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
     }
 
     const idleSway = Math.sin(time * 1.6) * 0.02;
-    if (aiming) {
+    if (riding) {
+      leftArm.pivot.rotation.z = -0.24;
+      rightArm.pivot.rotation.z = 0.24;
+      leftArm.lowerPivot.rotation.z = 0;
+      rightArm.lowerPivot.rotation.z = 0;
+    } else if (aiming) {
       const aimPitch = -1.35;
       rightArm.pivot.rotation.x = aimPitch;
       rightArm.pivot.rotation.z = 0.05;
@@ -547,12 +583,13 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
     // keep the muzzle level instead of pointing at the sky when the arm
     // raises to aim or tucks in for a sprint.
     let muzzlePitch;
-    if (aiming) muzzlePitch = 0.02;
+    if (riding) muzzlePitch = 0.1;
+    else if (aiming) muzzlePitch = 0.02;
     else if (grounded && run > 0.3) muzzlePitch = 0.12;
     else muzzlePitch = 0.3;
     weapon.rotation.x = -(rightArm.pivot.rotation.x + rightArm.lowerPivot.rotation.x) + muzzlePitch;
     // Counter the torso lean so the operator keeps their eyes on the street.
-    headGroup.rotation.x = aiming ? -0.08 : -torso.rotation.x * 0.8 + Math.sin(time * 0.8) * 0.03;
+    headGroup.rotation.x = riding || aiming ? -0.08 : -torso.rotation.x * 0.8 + Math.sin(time * 0.8) * 0.03;
     headGroup.rotation.y = -torso.rotation.y * 0.6;
 
     if (state.flashTime > 0) {
@@ -879,6 +916,256 @@ export function buildCar(color = 0x20e6ff) {
       c.visible = lightsOn;
       c.material.opacity = lightsOn ? 0.22 : 0;
     });
+  };
+
+  return state;
+}
+
+/**
+ * Tron-style light cycle. When the Blender GLB is present its named wheel
+ * pivots are wrapped in steering groups so the exported Ride/Boost actions
+ * can drive the chassis while JavaScript owns rolling and steering. The
+ * procedural build mirrors the same state API used by buildCar().
+ */
+export function buildBike(color = 0x20e6ff) {
+  const group = new THREE.Group();
+  const bodyGroup = new THREE.Group();
+  group.add(bodyGroup);
+
+  const accent = glowMat(color, 1);
+  const frame = new THREE.MeshPhysicalMaterial({
+    color: 0x0a0d14,
+    roughness: 0.24,
+    metalness: 0.7,
+    clearcoat: 0.85,
+    clearcoatRoughness: 0.18,
+  });
+  const tireMat = new THREE.MeshStandardMaterial({ color: 0x07080b, roughness: 0.9 });
+  const rimMat = mat(0x2a2f3a, { roughness: 0.28, metalness: 0.9 });
+  const tailMat = new THREE.MeshBasicMaterial({
+    color: 0xff2350,
+    transparent: true,
+    opacity: 1,
+    toneMapped: false,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const wheels = [];
+  const exhausts = [];
+  const cones = [];
+  let underGlow = null;
+  let tail = null;
+  let glowNode = null;
+  let mixer = null;
+  let bikeActions = {};
+  let currentAction = null;
+
+  if (bikeAsset?.scene) {
+    const model = cloneSkeleton(bikeAsset.scene);
+    model.traverse((obj) => {
+      if (!obj.isMesh) return;
+      obj.geometry = obj.geometry.clone();
+      obj.castShadow = false;
+      obj.receiveShadow = false;
+      obj.frustumCulled = false;
+      const sources = Array.isArray(obj.material) ? obj.material : [obj.material];
+      const materials = sources.map((source) => {
+        const copy = source.clone();
+        if (copy.name === 'BK_Accent' || copy.name === 'BK_Glow') {
+          copy.color.setHex(color);
+          copy.emissive?.setHex(color);
+          copy.emissiveIntensity = 1.1;
+          copy.toneMapped = false;
+        }
+        return copy;
+      });
+      obj.material = Array.isArray(obj.material) ? materials : materials[0];
+    });
+    glowNode = model.getObjectByName('BK_AccentGlow') || null;
+    bodyGroup.add(model);
+
+    for (const [name, front] of [['wheel_front', true], ['wheel_rear', false]]) {
+      const pivot = model.getObjectByName(name);
+      if (!pivot || !pivot.parent) continue;
+      const steer = new THREE.Group();
+      steer.position.copy(pivot.position);
+      steer.quaternion.copy(pivot.quaternion);
+      steer.scale.copy(pivot.scale);
+      pivot.position.set(0, 0, 0);
+      pivot.quaternion.identity();
+      pivot.scale.set(1, 1, 1);
+      pivot.parent.add(steer);
+      steer.add(pivot);
+      wheels.push({ steer, spin: pivot, front });
+    }
+    if (bikeAsset.animations?.length) {
+      mixer = new THREE.AnimationMixer(model);
+      for (const clip of bikeAsset.animations) bikeActions[clip.name.toLowerCase()] = mixer.clipAction(clip);
+      currentAction = bikeActions.idle || bikeActions.ride || null;
+      currentAction?.play();
+    }
+  }
+
+  // Procedural geometry is also the wheel fallback if a GLB omits a pivot.
+  const buildWheel = (z, front) => {
+    const steer = new THREE.Group();
+    steer.position.set(0, 0.55, z);
+    group.add(steer);
+    const spin = new THREE.Group();
+    steer.add(spin);
+    const tireGeo = new THREE.TorusGeometry(0.5, 0.11, 8, 18);
+    tireGeo.rotateY(Math.PI / 2);
+    spin.add(new THREE.Mesh(tireGeo, tireMat));
+    const rimGeo = new THREE.CylinderGeometry(0.33, 0.33, 0.17, 10);
+    rimGeo.rotateZ(Math.PI / 2);
+    spin.add(new THREE.Mesh(rimGeo, rimMat));
+    for (let i = 0; i < 3; i += 1) {
+      const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.62, 0.035), accent);
+      spoke.rotation.x = (i * Math.PI) / 3;
+      spin.add(spoke);
+    }
+    wheels.push({ steer, spin, front });
+  };
+  if (wheels.length < 2) {
+    wheels.length = 0;
+    buildWheel(0.92, true);
+    buildWheel(-0.92, false);
+  }
+
+  if (!bikeAsset?.scene) {
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.18, 1.9), frame);
+    deck.position.set(0, 0.62, 0);
+    bodyGroup.add(deck);
+    const tank = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.34, 0.95), frame);
+    tank.position.set(0, 0.83, 0.32);
+    bodyGroup.add(tank);
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.12, 0.72), tireMat);
+    seat.position.set(0, 0.87, -0.52);
+    bodyGroup.add(seat);
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.2, 0.5), frame);
+    nose.position.set(0, 0.85, 1.02);
+    bodyGroup.add(nose);
+    for (const side of [-1, 1]) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.07, 2.05), accent);
+      strip.position.set(side * 0.34, 0.69, -0.05);
+      bodyGroup.add(strip);
+      const fork = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.62, 0.075), frame);
+      fork.position.set(side * 0.2, 0.78, 0.92);
+      fork.rotation.x = -0.2;
+      bodyGroup.add(fork);
+    }
+    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.035, 1.55), accent);
+    spine.position.set(0, 1.01, -0.1);
+    bodyGroup.add(spine);
+    glowNode = spine;
+  }
+
+  // Lights, ground pool and boost flame are shared by GLB and fallback bikes.
+  tail = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.06, 0.05), tailMat);
+  tail.position.set(0, 0.76, -1.22);
+  bodyGroup.add(tail);
+  const headMat = new THREE.MeshBasicMaterial({
+    map: createGlowSpriteTexture('#bfeaff'),
+    color: 0xbfeaff,
+    transparent: true,
+    opacity: 0.07,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const pool = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 8.4), headMat);
+  pool.rotation.x = -Math.PI / 2;
+  pool.position.set(0, 0.07, 5.2);
+  bodyGroup.add(pool);
+  cones.push(pool);
+  underGlow = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.4, 4.6),
+    new THREE.MeshBasicMaterial({
+      map: createGlowSpriteTexture(`#${new THREE.Color(color).getHexString()}`),
+      color,
+      transparent: true,
+      opacity: 0.32,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  underGlow.rotation.x = -Math.PI / 2;
+  underGlow.position.y = 0.045;
+  group.add(underGlow);
+  const flame = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createGlowSpriteTexture('#ff7bd8'),
+      color: 0xff5fc4,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  flame.position.set(0, 0.66, -1.34);
+  flame.scale.set(0.7, 0.6, 1);
+  bodyGroup.add(flame);
+  exhausts.push(flame);
+
+  const state = {
+    group,
+    bodyGroup,
+    wheels,
+    underGlow,
+    exhausts,
+    cones,
+    brake: 0,
+    boost: 0,
+    spin: 0,
+    prevSpeed: 0,
+    color,
+    headMat,
+    mixer,
+  };
+
+  state.update = (dt, speed, steering, boosting, braking, lightsOn = true) => {
+    const abs = Math.abs(speed);
+    const accel = (speed - state.prevSpeed) / Math.max(dt, 0.001);
+    state.prevSpeed = speed;
+    state.spin += speed * dt * 2.15;
+    state.boost = lerp(state.boost, boosting ? 1 : 0, 1 - Math.exp(-8 * dt));
+    state.brake = lerp(state.brake, braking ? 1 : 0, 1 - Math.exp(-9 * dt));
+    bodyGroup.rotation.z = -steering * clamp(abs / 34, 0, 1) * 0.19;
+    bodyGroup.rotation.x = clamp(-accel * 0.0015, -0.1, 0.1) - state.boost * 0.055;
+    bodyGroup.position.y = Math.sin(state.spin * 0.8) * clamp(abs * 0.0012, 0, 0.014);
+
+    if (mixer) {
+      const next = boosting ? (bikeActions.boost || bikeActions.ride)
+        : abs > 0.5 ? (bikeActions.ride || bikeActions.idle)
+          : (bikeActions.idle || bikeActions.ride);
+      if (next && next !== currentAction) {
+        currentAction?.fadeOut(0.18);
+        next.reset().setEffectiveWeight(1).fadeIn(0.18).play();
+        currentAction = next;
+      }
+      mixer.update(dt);
+    }
+    for (const wheel of wheels) {
+      wheel.spin.rotation.x = state.spin;
+      wheel.steer.rotation.y = wheel.front ? steering * 0.52 : 0;
+    }
+
+    tail.material.opacity = lightsOn ? 1 : 0.2;
+    tail.material.color.setHex(braking ? 0xff3333 : 0xff2350);
+    tail.scale.x = braking ? 1.12 : 1;
+    exhausts.forEach((f) => {
+      f.material.opacity = state.boost * (0.65 + Math.random() * 0.35);
+      f.scale.set(0.6 + state.boost * 0.4, 0.5 + state.boost * 0.55, 1);
+      f.position.z = -1.34 - state.boost * (0.25 + Math.random() * 0.35);
+    });
+    underGlow.material.opacity = 0.25 + state.boost * 0.45;
+    cones.forEach((c) => {
+      c.visible = lightsOn;
+      c.material.opacity = lightsOn ? 0.2 : 0;
+    });
+    if (glowNode) glowNode.scale.setScalar(1 + state.boost * 0.055);
   };
 
   return state;

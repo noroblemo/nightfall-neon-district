@@ -313,6 +313,26 @@ export class UI {
         objective = `Hold inside the signal relays — ${collected}/${cacheCount} uploaded. Active: ${progress}%.`;
       } else if (mode === 'vehicle') {
         objective = `Lift ${cacheCount} executive caches, then exfil by marked car.`;
+      } else if (mode === 'circuit') {
+        const next = state.shards?.find((s) => s.order === breached && !s.collected);
+        const clock = state.timeLimit
+          ? (state.overtime ? 'OVERTIME — bonus forfeited.' : `${Math.ceil(state.timeRemaining || 0)}s left.`)
+          : '';
+        objective = `Ride a bike or drive through checkpoint ${breached + 1}/${cacheCount}${next ? `: ${next.name}` : ''}. ${clock}`.trim();
+        if (state.overtime) eyebrow = 'CIRCUIT OVERTIME';
+      } else if (mode === 'courier') {
+        const next = state.shards?.find((s) => s.order === breached && !s.collected);
+        objective = `Deliver the package to drop ${breached + 1}/${cacheCount}${next ? `: ${next.name}` : ''}.`;
+        eyebrow = 'PACKAGE IN TRANSIT';
+      } else if (mode === 'hunt') {
+        const left = Math.max(0, (state.requiredKills || 0) - kills);
+        const clock = state.timeLimit
+          ? (state.overtime ? 'OVERTIME — bonus forfeited.' : `${Math.ceil(state.timeRemaining || 0)}s for bonus.`)
+          : '';
+        objective = left > 0
+          ? `Neutralize ${left} more marked security units. ${clock}`.trim()
+          : `Security down. Secure ${cacheCount} bounty files. ${clock}`.trim();
+        if (state.overtime) eyebrow = 'BOUNTY OVERTIME';
       }
     } else if (state.phase === 'extract') {
       objective = mode === 'vehicle'
@@ -396,6 +416,12 @@ export class UI {
       $('speedLines')?.classList.remove('is-boosting');
       $('speedLines')?.classList.remove('is-sprinting');
     }
+  }
+
+  setVehicleKind(kind) {
+    const label = $('vitalsState');
+    if (!label) return;
+    setText(label, kind === 'bike' ? 'RIDING LIGHT CYCLE' : 'BEHIND THE WHEEL');
   }
 
   setAmmo(ammo, reserve, reloadProgress = 0) {
@@ -801,10 +827,11 @@ export class UI {
     this.deathOverlay?.classList.add('hidden');
   }
 
-  showResult({ time, score, countdown, caches, contractName }) {
+  showResult({ time, score, countdown, caches, contractName, credits = 0 }) {
     this.resultOverlay?.classList.remove('hidden');
     setText($('resultTime'), formatTime(time));
     setText($('resultScore'), formatNumber(score));
+    setText($('resultCredits'), `+${formatNumber(credits)} CR`);
     setText($('resultCaches'), `${caches} SECURED`);
     setText($('resultCountdown'), String(Math.max(0, Math.ceil(countdown))));
     if (contractName) setText($('resultName'), contractName);

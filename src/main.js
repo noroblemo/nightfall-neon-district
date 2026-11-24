@@ -8,7 +8,7 @@ import { UI } from './hud.js';
 import { createWorld } from './world.js';
 import { Effects } from './effects.js';
 import { AudioEngine } from './audio.js';
-import { setOperatorAsset } from './models.js';
+import { setOperatorAsset, setOperatorAssets, setBikeAsset } from './models.js';
 import { NightfallGame } from './game.js';
 
 const QUALITY = {
@@ -19,9 +19,13 @@ const QUALITY = {
 
 const MIN_DYNAMIC_SCALE = 0.55;
 const QUALITY_KEY = 'nightfall:quality';
-// Bump this when the operator asset changes so CDNs and GitHub Pages pick up
-// the new GLB instead of a previously cached build.
-const OPERATOR_ASSET_URL = './assets/operator.glb?v=20261123b';
+// Bump this when any GLB changes so CDNs and GitHub Pages pick up the new
+// assets instead of a previously cached build.
+const ASSET_VERSION = '?v=20261124a';
+const OPERATOR_MALE_URL = `./assets/operator_male.glb${ASSET_VERSION}`;
+const OPERATOR_FEMALE_URL = `./assets/operator_female.glb${ASSET_VERSION}`;
+const OPERATOR_LEGACY_URL = `./assets/operator.glb${ASSET_VERSION}`;
+const BIKE_ASSET_URL = `./assets/bike.glb${ASSET_VERSION}`;
 const canvas = document.getElementById('gameCanvas');
 const ui = new UI();
 ui.setLoading(0.04, 'INITIALIZING THE DISTRICT');
@@ -146,15 +150,30 @@ async function boot() {
   }
   applyQuality(initialQuality);
 
-  ui.setLoading(0.8, 'DEPLOYING THE OPERATOR');
+  ui.setLoading(0.8, 'DEPLOYING THE OPERATORS');
   await nextFrame();
-  try {
-    const gltf = await new GLTFLoader().loadAsync(OPERATOR_ASSET_URL);
-    setOperatorAsset(gltf);
-  } catch (error) {
-    // The procedural operator remains fully playable if the asset is missing.
-    console.warn('[nightfall] operator asset unavailable, using procedural fallback:', error);
-  }
+  const assetLoader = new GLTFLoader();
+  // Each asset is independent: a missing variant or bike only removes that
+  // option, it never takes the procedural gameplay down with it.
+  const loadAsset = async (url, label) => {
+    try {
+      return await assetLoader.loadAsync(url);
+    } catch (error) {
+      console.warn(`[nightfall] ${label} asset unavailable, using fallback:`, error);
+      return null;
+    }
+  };
+  const [maleAsset, femaleAsset, bikeAsset] = await Promise.all([
+    loadAsset(OPERATOR_MALE_URL, 'male operator'),
+    loadAsset(OPERATOR_FEMALE_URL, 'female operator'),
+    loadAsset(BIKE_ASSET_URL, 'light bike'),
+  ]);
+  const legacyAsset = maleAsset ? null : await loadAsset(OPERATOR_LEGACY_URL, 'operator');
+  const male = maleAsset || legacyAsset;
+  setOperatorAssets({ male, female: femaleAsset || male });
+  // Keep the historic single-asset hook valid for older callers.
+  setOperatorAsset(male);
+  setBikeAsset(bikeAsset);
 
   ui.setLoading(0.84, 'BINDING THE RESPONSE GRID');
   await nextFrame();
