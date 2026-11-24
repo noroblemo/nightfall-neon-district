@@ -20,6 +20,9 @@ export class Effects {
     geo.setAttribute('aColor', new THREE.BufferAttribute(this.particleColors, 3));
     geo.setAttribute('aSize', new THREE.BufferAttribute(this.particleSizes, 1));
     geo.setAttribute('aAlpha', new THREE.BufferAttribute(this.particleAlphas, 1));
+    for (const attr of Object.values(geo.attributes)) attr.setUsage(THREE.DynamicDrawUsage);
+    this.activeParticles = 0;
+    this.particleUploadPending = true;
     this.particleGeo = geo;
     this.particleTex = createGlowSpriteTexture('#ffffff');
     this.particleMat = new THREE.ShaderMaterial({
@@ -79,6 +82,10 @@ export class Effects {
     const tgeo = new THREE.BufferGeometry();
     tgeo.setAttribute('position', new THREE.BufferAttribute(this.tracerPositions, 3));
     tgeo.setAttribute('color', new THREE.BufferAttribute(this.tracerColors, 3));
+    for (const attr of Object.values(tgeo.attributes)) attr.setUsage(THREE.DynamicDrawUsage);
+    this.activeTracers = 0;
+    this.tracerPositionsDirty = true;
+    this.tracerColorsDirty = true;
     this.tracerGeo = tgeo;
     this.tracerLines = new THREE.LineSegments(
       tgeo,
@@ -113,7 +120,9 @@ export class Effects {
     const spread = opts.spread ?? 0;
     const angle = Math.random() * TAU;
     const radius = Math.random() * spread;
+    if (!p.alive) this.activeParticles += 1;
     p.alive = true;
+    this.particleUploadPending = true;
     p.x = opts.x + Math.cos(angle) * radius;
     p.y = opts.y + (Math.random() - 0.5) * (opts.spreadY ?? 0);
     p.z = opts.z + Math.sin(angle) * radius;
@@ -337,7 +346,10 @@ export class Effects {
     const idx = this.tracers.indexOf(available);
     const i = idx >= 0 ? idx : 0;
     const t = this.tracers[i];
+    if (t.life <= 0) this.activeTracers += 1;
     t.life = 0.08;
+    this.tracerPositionsDirty = true;
+    this.tracerColorsDirty = true;
     t.maxLife = 0.08;
     this.tmpColor.set(color);
     t.r = this.tmpColor.r;
@@ -391,16 +403,16 @@ export class Effects {
   }
 
   update(dt) {
+    const hadParticles = this.activeParticles > 0;
     for (let i = 0; i < MAX_PARTICLES; i += 1) {
       const p = this.particles[i];
-      if (!p.alive) {
-        this.particleAlphas[i] = 0;
-        continue;
-      }
+      if (!p.alive) continue;
       p.life -= dt;
       if (p.life <= 0) {
         p.alive = false;
+        this.activeParticles = Math.max(0, this.activeParticles - 1);
         this.particleAlphas[i] = 0;
+        this.particleUploadPending = true;
         continue;
       }
       p.vx *= p.drag;
@@ -427,14 +439,21 @@ export class Effects {
       this.particleSizes[i] = size;
       this.particleAlphas[i] = alpha;
     }
-    this.particleGeo.attributes.position.needsUpdate = true;
-    this.particleGeo.attributes.aColor.needsUpdate = true;
-    this.particleGeo.attributes.aSize.needsUpdate = true;
-    this.particleGeo.attributes.aAlpha.needsUpdate = true;
+    if (this.activeParticles > 0 || hadParticles || this.particleUploadPending) {
+      this.particleGeo.attributes.position.needsUpdate = true;
+      this.particleGeo.attributes.aColor.needsUpdate = true;
+      this.particleGeo.attributes.aSize.needsUpdate = true;
+      this.particleGeo.attributes.aAlpha.needsUpdate = true;
+      this.particleUploadPending = false;
+    }
 
+    const hadTracers = this.activeTracers > 0;
     for (let i = 0; i < this.tracerCount; i += 1) {
       const t = this.tracers[i];
-      if (t.life > 0) t.life -= dt;
+      if (t.life > 0) {
+        t.life -= dt;
+        if (t.life <= 0) this.activeTracers = Math.max(0, this.activeTracers - 1);
+      }
       const fade = Math.max(0, t.life / Math.max(0.001, t.maxLife));
       const idx = i * 6;
       this.tracerColors[idx] = t.r * fade;
@@ -444,8 +463,14 @@ export class Effects {
       this.tracerColors[idx + 4] = t.g * fade;
       this.tracerColors[idx + 5] = t.b * fade;
     }
-    this.tracerGeo.attributes.position.needsUpdate = true;
-    this.tracerGeo.attributes.color.needsUpdate = true;
+    if (this.tracerPositionsDirty) {
+      this.tracerGeo.attributes.position.needsUpdate = true;
+      this.tracerPositionsDirty = false;
+    }
+    if (this.activeTracers > 0 || hadTracers || this.tracerColorsDirty) {
+      this.tracerGeo.attributes.color.needsUpdate = true;
+      this.tracerColorsDirty = false;
+    }
 
     for (let i = this.shockwaves.length - 1; i >= 0; i -= 1) {
       const s = this.shockwaves[i];

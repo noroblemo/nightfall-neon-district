@@ -130,6 +130,45 @@ export function circleBoxResolve(pos, radius, box) {
   return true;
 }
 
+// Resolve a circle against a yawed rectangle on the XZ plane. `box.rot` uses
+// the game's yaw convention: +Z is the box's forward axis.
+export function circleOrientedBoxResolve(pos, radius, box) {
+  const cos = Math.cos(box.rot);
+  const sin = Math.sin(box.rot);
+  const dx = pos.x - box.x;
+  const dz = pos.z - box.z;
+  // World -> box-local. Local +X is right, local +Z is forward.
+  const lx = dx * cos - dz * sin;
+  const lz = dx * sin + dz * cos;
+  const nearestX = clamp(lx, -box.halfX, box.halfX);
+  const nearestZ = clamp(lz, -box.halfZ, box.halfZ);
+  let ox = lx - nearestX;
+  let oz = lz - nearestZ;
+  const d2 = ox * ox + oz * oz;
+  if (d2 >= radius * radius) return false;
+  if (d2 > 0.000001) {
+    const d = Math.sqrt(d2);
+    const push = radius - d;
+    ox = (ox / d) * push;
+    oz = (oz / d) * push;
+  } else {
+    // Center is inside the hull: exit through the nearest face.
+    const left = lx + box.halfX;
+    const right = box.halfX - lx;
+    const back = lz + box.halfZ;
+    const front = box.halfZ - lz;
+    const m = Math.min(left, right, back, front);
+    if (m === left) ox = -left - radius;
+    else if (m === right) ox = right + radius;
+    else if (m === back) oz = -back - radius;
+    else oz = front + radius;
+  }
+  // Box-local -> world.
+  pos.x += ox * cos + oz * sin;
+  pos.z += -ox * sin + oz * cos;
+  return true;
+}
+
 export function segmentBoxHit(start, end, box, pad = 0) {
   // 2D slab test on XZ, returns hit distance fraction or null.
   let tmin = 0;

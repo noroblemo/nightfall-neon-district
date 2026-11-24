@@ -8,14 +8,14 @@ A browser-based co-op open-world action game with Forza-style arcade driving, bu
 
 ## Features
 
-- **Open world** — a procedural neon city (~436m across) with buildings, plaza, metro landmarks, dynamic lights and bloom post-processing.
+- **Open world** — a procedural neon city (~436m across) with buildings, plaza, metro landmarks, dynamic lights, bloom post-processing and a finished, collidable perimeter.
 - **Switchable weather** — rain, clear skies, dense fog, electric storms and snow, with smooth transitions and a distinct soundscape for each: rain patter, city air, foghorns, rolling thunder and icy wind. Press `V` in-game or use the **WEATHER** toggle in the pause menu (the host picks for the room).
 - **Adaptive audio** — an original synthwave score during contracts, plus positional foley for weapons, footsteps, vehicles and pickups. `M` or the pause-menu button mutes everything.
 - **Contract ladder** — six escalating heist contracts, from GHOST PROTOCOL to LAST SIGNAL, with more caches, tighter security and longer extractions each run. Clear one and the next begins automatically.
-- **Driving** — arcade supercar physics with boost, handbrake drifts, tire trails, chase camera and engine audio.
+- **Driving** — arcade supercar physics with boost, handbrake drifts, tire trails, chase camera and engine audio. Oriented car hulls stop both vehicles and pedestrians from cutting through parked or moving traffic.
 - **Combat** — third-person over-shoulder shooting with tracers, hitmarkers, reloads, guards and scout drones with detection/leash AI.
 - **Online multiplayer** — room codes, up to 4 operatives per room on the WebSocket relay (2 on P2P fallback). Host-authoritative mission/enemy simulation with client prediction for movement.
-- **Performance** — dynamic resolution scaling, quality presets, ACES tone mapping; targets 60 FPS on laptops.
+- **Performance** — instanced traffic and static geometry merges, partial effect-buffer uploads, dynamic resolution scaling with hysteresis, quality presets and ACES tone mapping; targets 60 FPS on laptops.
 
 ## Quick start
 

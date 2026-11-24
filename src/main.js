@@ -12,11 +12,12 @@ import { setOperatorAsset } from './models.js';
 import { NightfallGame } from './game.js';
 
 const QUALITY = {
-  performance: { cap: 1.0, bloom: 0.34, bloomRadius: 0.4, worldQuality: 0.72, low: true },
-  balanced: { cap: 1.35, bloom: 0.55, bloomRadius: 0.5, worldQuality: 1, low: false },
-  cinematic: { cap: 2.0, bloom: 0.72, bloomRadius: 0.6, worldQuality: 1, low: false },
+  performance: { cap: 0.85, bloom: 0.28, bloomRadius: 0.35, worldQuality: 0.72, low: true, samples: 0 },
+  balanced: { cap: 1.0, bloom: 0.48, bloomRadius: 0.45, worldQuality: 1, low: false, samples: 0 },
+  cinematic: { cap: 1.5, bloom: 0.68, bloomRadius: 0.6, worldQuality: 1, low: false, samples: 4 },
 };
 
+const MIN_DYNAMIC_SCALE = 0.55;
 const QUALITY_KEY = 'nightfall:quality';
 // Bump this when the operator asset changes so CDNs and GitHub Pages pick up
 // the new GLB instead of a previously cached build.
@@ -99,7 +100,7 @@ async function boot() {
   const initialSize = renderer.getDrawingBufferSize(new THREE.Vector2());
   const renderTarget = new THREE.WebGLRenderTarget(initialSize.x, initialSize.y, {
     type: THREE.HalfFloatType,
-    samples: 2,
+    samples: quality.samples,
   });
   renderTarget.texture.name = 'nightfall.hdr';
   const composer = new EffectComposer(renderer, renderTarget);
@@ -110,6 +111,13 @@ async function boot() {
     quality.bloomRadius,
     0.74,
   );
+  // Bloom dominates postprocessing cost at high DPR. Run its blur chain at a
+  // lower internal resolution; the additive result is upsampled by the output
+  // pass and is visually nearly identical for neon glows.
+  const bloomSetSize = bloomPass.setSize.bind(bloomPass);
+  bloomPass.setSize = (width, height) => {
+    bloomSetSize(Math.max(2, Math.round(width * 0.65)), Math.max(2, Math.round(height * 0.65)));
+  };
   const outputPass = new OutputPass();
   composer.addPass(renderPass);
   composer.addPass(bloomPass);
@@ -171,6 +179,7 @@ async function boot() {
   let smoothedFps = 60;
   let adaptTimer = 0;
   let fastTime = 0;
+  let slowWindows = 0;
 
   function resize() {
     const width = window.innerWidth;
@@ -195,8 +204,12 @@ async function boot() {
     const rawDt = (now - lastTime) / 1000;
     lastTime = now;
     const dt = Math.min(Math.max(rawDt, 0), 0.05);
-    fpsAccumulator += rawDt;
-    fpsFrames += 1;
+    // Ignore tab-switch/stall gaps so they cannot skew FPS or trigger a
+    // resolution drop when the page becomes visible again.
+    if (rawDt > 0 && rawDt < 0.25) {
+      fpsAccumulator += rawDt;
+      fpsFrames += 1;
+    }
     if (fpsAccumulator >= 0.5) {
       smoothedFps = fpsFrames / fpsAccumulator;
       fpsAccumulator = 0;
@@ -213,26 +226,36 @@ async function boot() {
     effects.update(dt);
     composer.render(dt);
 
-    // Adaptive resolution keeps motion smooth on modest laptops.
-    adaptTimer += rawDt;
+    // Adaptive resolution with hysteresis: react to sustained slow windows,
+    // recover slowly, and never oscillate on a single stutter.
+    if (rawDt < 0.25) adaptTimer += rawDt;
     if (game.status === 'playing' || game.status === 'dead') {
-      if (adaptTimer > 1.1) {
+      if (adaptTimer > 1.2) {
         adaptTimer = 0;
-        if (smoothedFps < 52 && dynamicScale > 0.62) {
-          dynamicScale = Math.max(0.62, dynamicScale - 0.08);
-          applyDpr();
+        if (smoothedFps < 50) {
+          slowWindows += 1;
           fastTime = 0;
+          if (slowWindows >= 2 && dynamicScale > MIN_DYNAMIC_SCALE) {
+            dynamicScale = Math.max(MIN_DYNAMIC_SCALE, dynamicScale - 0.07);
+            applyDpr();
+            slowWindows = 0;
+          }
         } else if (smoothedFps > 58) {
-          fastTime += 1.1;
-          if (fastTime > 4.5 && dynamicScale < 1) {
-            dynamicScale = Math.min(1, dynamicScale + 0.04);
+          slowWindows = 0;
+          fastTime += 1.2;
+          if (fastTime >= 6 && dynamicScale < 1) {
+            dynamicScale = Math.min(1, dynamicScale + 0.05);
             applyDpr();
             fastTime = 0;
           }
         } else {
+          slowWindows = 0;
           fastTime = 0;
         }
       }
+    } else {
+      slowWindows = 0;
+      fastTime = 0;
     }
   }
 

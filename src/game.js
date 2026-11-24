@@ -16,6 +16,7 @@ import {
   dist2D,
   lerp,
   circleBoxResolve,
+  circleOrientedBoxResolve,
   segmentBoxHit,
   TAU,
 } from './utils.js';
@@ -1122,10 +1123,12 @@ export class NightfallGame {
       p.grounded = true;
     }
 
-    // Building collision and world bounds
+    // Building/car collision and world bounds. Car hulls are oriented with
+    // each vehicle so the player cannot cut through parked or moving cars.
     for (const collider of this.world.colliders) {
       circleBoxResolve(p.pos, 0.46, collider);
     }
+    this.resolveCarHulls(p.pos, 0.46, false);
     const bounds = this.world.metro.bounds - 4;
     p.pos.x = clamp(p.pos.x, -bounds, bounds);
     p.pos.z = clamp(p.pos.z, -bounds, bounds);
@@ -1276,6 +1279,41 @@ export class NightfallGame {
     this.ui.setBoosting(boosting);
   }
 
+  // Reusable oriented hulls for every parked/remote car and ambient traffic
+  // car. Sharing the pool keeps collision checks allocation-free per frame.
+  getCarHulls(includeLocal = false) {
+    const pool = this._carHullPool || (this._carHullPool = []);
+    const hulls = this._carHulls || (this._carHulls = []);
+    let count = 0;
+    const push = (x, z, halfX, halfZ, rot) => {
+      let hull = pool[count];
+      if (!hull) hull = pool[count] = { x: 0, z: 0, halfX: 0, halfZ: 0, rot: 0 };
+      hull.x = x;
+      hull.z = z;
+      hull.halfX = halfX;
+      hull.halfZ = halfZ;
+      hull.rot = rot;
+      hulls[count++] = hull;
+    };
+    for (const other of this.cars) {
+      if (!includeLocal && other === this.localCar) continue;
+      push(other.x, other.z, 1.12, 2.35, other.yaw);
+    }
+    for (const car of this.world.traffic) {
+      push(car.x, car.z, 0.98, 2.16, car.yaw);
+    }
+    hulls.length = count;
+    return hulls;
+  }
+
+  resolveCarHulls(point, radius, includeLocal = false) {
+    let hit = false;
+    for (const hull of this.getCarHulls(includeLocal)) {
+      if (circleOrientedBoxResolve(point, radius, hull)) hit = true;
+    }
+    return hit;
+  }
+
   resolveVehicleCollisions(car, forwardX, forwardZ) {
     let hit = false;
     for (const offset of [-1.45, 0, 1.45]) {
@@ -1285,6 +1323,7 @@ export class NightfallGame {
       for (const collider of this.world.colliders) {
         circleBoxResolve(point, 1.02, collider);
       }
+      if (this.resolveCarHulls(point, 1.12, false)) hit = true;
       const dx = point.x - startX;
       const dz = point.z - startZ;
       if (Math.abs(dx) + Math.abs(dz) > 0.001) {
@@ -1424,17 +1463,20 @@ export class NightfallGame {
     if (!car) return;
     const sin = Math.sin(car.yaw);
     const cos = Math.cos(car.yaw);
-    let side = 1;
     let x = car.x + cos * 1.7;
     let z = car.z - sin * 1.7;
+    let blocked = false;
     for (const collider of this.world.colliders) {
       const point = { x, z };
       if (circleBoxResolve(point, 0.5, collider)) {
-        side = -1;
-        x = car.x + cos * -1.7;
-        z = car.z - sin * -1.7;
+        blocked = true;
         break;
       }
+    }
+    if (!blocked && this.resolveCarHulls({ x, z }, 0.5, false)) blocked = true;
+    if (blocked) {
+      x = car.x + cos * -1.7;
+      z = car.z - sin * -1.7;
     }
     const bounds = this.world.metro.bounds - 4;
     this.player.pos.set(clamp(x, -bounds, bounds), 0, clamp(z, -bounds, bounds));
@@ -3036,6 +3078,10 @@ export class NightfallGame {
   updateHUD(dt, elapsed) {
     if (!this.player) return;
     this.hudTick += dt;
+    // HUD text, labels and the minimap do not need 60 Hz updates. Throttling
+    // them removes a surprising amount of DOM and canvas work per frame.
+    if (this.hudTick < 0.045) return;
+    this.hudTick = 0;
     this.ui.setVitals(this.player.health, this.player.stamina);
     if (this.currentMode === 'foot') this.ui.setAmmo(this.player.ammo, this.player.reserve, this.player.reloading > 0 ? 1 - this.player.reloading / 1.35 : 0);
 
@@ -3089,26 +3135,23 @@ export class NightfallGame {
     }
     this.ui.updateLabels(this.camera, width, height, markers, dt);
 
-    if (this.hudTick > 0.045) {
-      this.hudTick = 0;
-      const enemies = this.isHost
-        ? this.localEnemies.filter((e) => e.alive)
-        : [...this.remoteEnemies.values()].filter((e) => e.alive);
-      this.ui.drawMinimap(
-        this.world,
-        { x: this.player.pos.x, z: this.player.pos.z, rot: this.currentMode === 'car' && this.localCar ? this.localCar.yaw : this.player.bodyYaw },
-        [...this.remotePlayers.values()].map((r) => ({
-          x: r.pos.x,
-          z: r.pos.z,
-          rot: r.bodyYaw,
-          colorHex: cssColor(r.color),
-        })),
-        this.mission,
-        enemies.map((e) => ({ x: e.x, z: e.z })),
-        this.pings,
-        performance.now(),
-      );
-    }
+    const enemies = this.isHost
+      ? this.localEnemies.filter((e) => e.alive)
+      : [...this.remoteEnemies.values()].filter((e) => e.alive);
+    this.ui.drawMinimap(
+      this.world,
+      { x: this.player.pos.x, z: this.player.pos.z, rot: this.currentMode === 'car' && this.localCar ? this.localCar.yaw : this.player.bodyYaw },
+      [...this.remotePlayers.values()].map((r) => ({
+        x: r.pos.x,
+        z: r.pos.z,
+        rot: r.bodyYaw,
+        colorHex: cssColor(r.color),
+      })),
+      this.mission,
+      enemies.map((e) => ({ x: e.x, z: e.z })),
+      this.pings,
+      performance.now(),
+    );
 
     if (performance.now() - this.lastFpsUpdate > 700) {
       this.lastFpsUpdate = performance.now();

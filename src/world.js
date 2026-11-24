@@ -464,6 +464,68 @@ export function createWorld(scene, renderer) {
     color: c,
     toneMapped: false,
   }));
+
+  // Perimeter finish -----------------------------------------------------
+  // The old map ended in bare asphalt at the clamp boundary. These merged
+  // barriers, service curbs and neon rails give the district a real edge.
+  const perimeterWallGeos = [];
+  const perimeterTrimGeos = [];
+  const perimeterNeonGeos = [NEON[0], NEON[1]].map(() => []);
+  const edge = WORLD_SIZE.bounds;
+  const wallThickness = 8;
+  const wallHeight = 3.2;
+  const wallSpan = edge * 2 + wallThickness * 2;
+  const addBox = (list, x, y, z, w, h, d) => {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    geo.translate(x, y, z);
+    list.push(geo);
+  };
+
+  for (const sign of [-1, 1]) {
+    addBox(perimeterWallGeos, sign * edge, wallHeight / 2 + 0.12, 0, wallThickness, wallHeight, wallSpan);
+    addBox(perimeterWallGeos, 0, wallHeight / 2 + 0.12, sign * edge, wallSpan, wallHeight, wallThickness);
+    addCollider(sign * edge, 0, wallThickness, wallSpan);
+    addCollider(0, sign * edge, wallSpan, wallThickness);
+
+    // Inner curb, rail and repeating pylons.
+    addBox(perimeterTrimGeos, sign * (edge - wallThickness / 2), 0.18, 0, 1.1, 0.36, edge * 2);
+    addBox(perimeterTrimGeos, 0, 0.18, sign * (edge - wallThickness / 2), edge * 2, 0.36, 1.1);
+    addBox(perimeterNeonGeos[0], sign * (edge - wallThickness / 2 - 0.12), 2.75, 0, 0.16, 0.16, edge * 2);
+    addBox(perimeterNeonGeos[1], 0, 2.75, sign * (edge - wallThickness / 2 - 0.12), edge * 2, 0.16, 0.16);
+
+    for (let p = -edge + 12; p <= edge - 12; p += 28) {
+      addBox(perimeterTrimGeos, sign * (edge - wallThickness / 2 - 0.18), 1.55, p, 0.36, 3, 0.36);
+      addBox(perimeterTrimGeos, p, 1.55, sign * (edge - wallThickness / 2 - 0.18), 0.36, 3, 0.36);
+    }
+
+    // Sealed gate markers where each arterial meets the perimeter.
+    for (const line of ROAD_LINES) {
+      addBox(perimeterTrimGeos, line, 1.6, sign * (edge - wallThickness / 2 - 0.28), 16, 2.9, 0.5);
+      addBox(perimeterTrimGeos, sign * (edge - wallThickness / 2 - 0.28), 1.6, line, 0.5, 2.9, 16);
+      addBox(perimeterNeonGeos[1], line, 0.32, sign * (edge - wallThickness / 2 - 0.58), 16, 0.12, 0.12);
+      addBox(perimeterNeonGeos[1], line, 3.02, sign * (edge - wallThickness / 2 - 0.58), 16, 0.12, 0.12);
+      addBox(perimeterNeonGeos[0], sign * (edge - wallThickness / 2 - 0.58), 0.32, line, 0.12, 0.12, 16);
+      addBox(perimeterNeonGeos[0], sign * (edge - wallThickness / 2 - 0.58), 3.02, line, 0.12, 0.12, 16);
+    }
+
+    // Corners read as secured checkpoints instead of an abrupt square.
+    for (const other of [-1, 1]) {
+      addBox(perimeterTrimGeos, sign * (edge - 3), 2.1, other * (edge - 3), 5.5, 4.2, 5.5);
+      addBox(perimeterNeonGeos[0], sign * (edge - 3), 4.35, other * (edge - 3), 3.4, 0.18, 3.4);
+    }
+  }
+
+  const addMerged = (geos, material) => {
+    if (!geos.length) return;
+    const merged = mergeGeometries(geos, false);
+    scene.add(new THREE.Mesh(merged, material));
+    geos.forEach((geo) => geo.dispose());
+  };
+  addMerged(perimeterWallGeos, facadeMaterials[2]);
+  addMerged(perimeterTrimGeos, trimMat);
+  addMerged(perimeterNeonGeos[0], neonMats[0]);
+  addMerged(perimeterNeonGeos[1], neonMats[1]);
+
   const buildingGeos = facadeMaterials.map(() => []);
   const roofGeos = [];
   const trimGeos = [];
@@ -517,32 +579,51 @@ export function createWorld(scene, renderer) {
     return { w, d, h };
   };
 
+  // Signs share a small set of textures and are merged by material. The old
+  // version created a separate material/texture and draw call for every sign.
+  const signBatches = new Map();
+  const signMaterialCache = new Map();
   const makeSign = (x, z, side, width, vertical = false, word = null, color = null, y = null) => {
-    const texture = createSignTexture(Math.floor(rng() * 999), word, color, vertical);
+    const rawIndex = Math.floor(rng() * 999);
+    const textureIndex = word || color ? rawIndex : rawIndex % 12;
+    const key = `${textureIndex}|${word}|${color}|${vertical}`;
+    let material = signMaterialCache.get(key);
+    if (!material) {
+      material = new THREE.MeshBasicMaterial({
+        map: createSignTexture(textureIndex, word, color, vertical),
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+        side: THREE.DoubleSide,
+      });
+      signMaterialCache.set(key, material);
+    }
     const height = width / (vertical ? 1 / 3.33 : 3.33);
-    const geo = new THREE.PlaneGeometry(width, height);
-    const mat = new THREE.MeshBasicMaterial({
-      map: texture,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false,
-      side: THREE.DoubleSide,
-    });
-    const sign = new THREE.Mesh(geo, mat);
     let rot = 0;
     if (side === 0) { rot = 0; z += 0.3; }
     if (side === 1) { rot = Math.PI; z -= 0.3; }
     if (side === 2) { rot = Math.PI / 2; x += 0.3; }
     if (side === 3) { rot = -Math.PI / 2; x -= 0.3; }
-    sign.rotation.y = rot;
-    sign.position.set(x, y ?? 0, z);
-    sign.renderOrder = 2;
-    scene.add(sign);
-    flickerSigns.push({ mesh: sign, base: 0.82 + rng() * 0.18, phase: rng() * 12, speed: rng.range(4, 14), broken: rng.chance(0.18) });
-    return sign;
+    const geo = new THREE.PlaneGeometry(width, height);
+    geo.rotateY(rot);
+    geo.translate(x, y ?? 0, z);
+
+    const base = 0.82 + rng() * 0.18;
+    const phase = rng() * 12;
+    const speed = rng.range(4, 14);
+    const broken = rng.chance(0.18);
+    let batch = signBatches.get(material);
+    if (!batch) {
+      batch = { material, geos: [], flicker: { base, phase, speed, broken } };
+      signBatches.set(material, batch);
+    }
+    batch.geos.push(geo);
+    return batch;
   };
 
+  const billboardFrameGeos = [];
+  const billboardFrameMat = new THREE.MeshStandardMaterial({ color: 0x090a10, roughness: 0.4, metalness: 0.8 });
   const addBillboard = (x, z, side, index, y = 13) => {
     const texture = createBillboardTexture(index);
     const w = 15;
@@ -564,14 +645,11 @@ export function createWorld(scene, renderer) {
     board.position.set(x, y, z);
     board.renderOrder = 2;
     scene.add(board);
-    const frame = new THREE.Mesh(
-      new THREE.BoxGeometry(w + 0.7, h + 0.7, 0.3),
-      new THREE.MeshStandardMaterial({ color: 0x090a10, roughness: 0.4, metalness: 0.8 }),
-    );
-    frame.position.set(x, y, z);
-    frame.rotation.y = rot;
-    frame.translateZ(-0.24);
-    scene.add(frame);
+    const frameGeo = new THREE.BoxGeometry(w + 0.7, h + 0.7, 0.3);
+    frameGeo.rotateY(rot);
+    frameGeo.translate(0, 0, -0.24);
+    frameGeo.translate(x, y, z);
+    billboardFrameGeos.push(frameGeo);
     return board;
   };
 
@@ -652,6 +730,17 @@ export function createWorld(scene, renderer) {
   }
 
   // Merge architecture draw calls.
+  for (const batch of signBatches.values()) {
+    const mesh = new THREE.Mesh(mergeGeometries(batch.geos, false), batch.material);
+    mesh.renderOrder = 2;
+    scene.add(mesh);
+    flickerSigns.push({ mesh, ...batch.flicker });
+    batch.geos.forEach((geo) => geo.dispose());
+  }
+  if (billboardFrameGeos.length) {
+    scene.add(new THREE.Mesh(mergeGeometries(billboardFrameGeos, false), billboardFrameMat));
+    billboardFrameGeos.forEach((geo) => geo.dispose());
+  }
   buildingGeos.forEach((geos, index) => {
     if (!geos.length) return;
     const merged = mergeGeometries(geos, false);
@@ -974,26 +1063,35 @@ export function createWorld(scene, renderer) {
   );
   scene.add(lampGlow);
 
-  // Neon spill pools on the road
-  const spillMat = new THREE.MeshBasicMaterial({
-    color: 0x3bf4ff,
-    transparent: true,
-    opacity: 0.08,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    toneMapped: false,
-  });
+  // Neon spill pools on the road. One merged mesh per neon color instead of
+  // 26 individually drawn translucent planes.
+  const spillGeos = NEON.map(() => []);
+  const spillDummy = new THREE.Object3D();
   for (let i = 0; i < 26; i += 1) {
-    const spill = new THREE.Mesh(new THREE.PlaneGeometry(rng.range(3, 9), rng.range(10, 26)), spillMat.clone());
-    spill.material.color.setHex(NEON[i % NEON.length]);
-    spill.rotation.x = -Math.PI / 2;
-    spill.rotation.z = rng() * TAU;
-    spill.position.set(rng.range(-200, 200), 0.115, rng.range(-200, 200));
-    scene.add(spill);
+    const geo = new THREE.PlaneGeometry(rng.range(3, 9), rng.range(10, 26));
+    spillDummy.position.set(rng.range(-200, 200), 0.115, rng.range(-200, 200));
+    spillDummy.rotation.set(-Math.PI / 2, 0, rng() * TAU);
+    spillDummy.scale.set(1, 1, 1);
+    spillDummy.updateMatrix();
+    geo.applyMatrix4(spillDummy.matrix);
+    spillGeos[i % NEON.length].push(geo);
   }
+  spillGeos.forEach((geos, i) => {
+    if (!geos.length) return;
+    const material = new THREE.MeshBasicMaterial({
+      color: NEON[i],
+      transparent: true,
+      opacity: 0.08,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    scene.add(new THREE.Mesh(mergeGeometries(geos, false), material));
+    geos.forEach((geo) => geo.dispose());
+  });
 
-  // Wet reflective puddles
+  // Wet reflective puddles — also merged into a single draw call.
   const puddleMat = new THREE.MeshStandardMaterial({
     color: 0x070b14,
     roughness: 0.04,
@@ -1003,17 +1101,21 @@ export function createWorld(scene, renderer) {
     envMapIntensity: 1.8,
     depthWrite: false,
   });
+  const puddleGeos = [];
+  const puddleDummy = new THREE.Object3D();
   for (let i = 0; i < 46; i += 1) {
-    const w = rng.range(2.5, 11);
-    const h = rng.range(1.2, 5);
-    const puddle = new THREE.Mesh(new THREE.CircleGeometry(1, 20), puddleMat);
-    puddle.scale.set(w, h, 1);
-    puddle.rotation.x = -Math.PI / 2;
-    puddle.rotation.z = rng() * TAU;
-    puddle.position.set(rng.range(-205, 205), 0.12, rng.range(-205, 205));
-    puddle.renderOrder = 1;
-    scene.add(puddle);
+    const geo = new THREE.CircleGeometry(1, 20);
+    puddleDummy.position.set(rng.range(-205, 205), 0.12, rng.range(-205, 205));
+    puddleDummy.rotation.set(-Math.PI / 2, 0, rng() * TAU);
+    puddleDummy.scale.set(rng.range(2.5, 11), rng.range(1.2, 5), 1);
+    puddleDummy.updateMatrix();
+    geo.applyMatrix4(puddleDummy.matrix);
+    puddleGeos.push(geo);
   }
+  const puddleMesh = new THREE.Mesh(mergeGeometries(puddleGeos, false), puddleMat);
+  puddleMesh.renderOrder = 1;
+  scene.add(puddleMesh);
+  puddleGeos.forEach((geo) => geo.dispose());
 
   // Props: planters, benches, barriers ----------------------------------
   const planterGeo = new THREE.BoxGeometry(2.8, 0.8, 2.8);
@@ -1137,51 +1239,71 @@ export function createWorld(scene, renderer) {
   scene.add(searchlights);
 
   // Traffic -------------------------------------------------------------
+  // Ambient cars are instanced by part. Ten cars previously cost ~90 draw
+  // calls per frame; now the whole stream costs five.
   const trafficColors = [0x242a38, 0x2e2633, 0x19262c, 0x3a2428, 0x1d1e28, 0x30303a];
-  const makeTrafficCar = (color) => {
-    const g = new THREE.Group();
-    const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.28, metalness: 0.7, envMapIntensity: 1.2 });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.55, 4.2), paint);
-    body.position.y = 0.62;
-    g.add(body);
-    const cabin = new THREE.Mesh(
-      new THREE.BoxGeometry(1.5, 0.5, 1.9),
-      new THREE.MeshStandardMaterial({ color: 0x0a111c, roughness: 0.12, metalness: 0.6 }),
-    );
-    cabin.position.set(0, 1.05, -0.2);
-    g.add(cabin);
+  const TRAFFIC_COUNT = 10;
+  const trafficLimit = WORLD_SIZE.bounds - 10;
+  const trafficParts = {};
+  {
+    const bodyGeo = new THREE.BoxGeometry(1.85, 0.55, 4.2);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.28, metalness: 0.7, envMapIntensity: 1.2 });
+    trafficParts.body = new THREE.InstancedMesh(bodyGeo, bodyMat, TRAFFIC_COUNT);
+    trafficParts.body.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+    const cabinGeo = new THREE.BoxGeometry(1.5, 0.5, 1.9);
+    const cabinMat = new THREE.MeshStandardMaterial({ color: 0x0a111c, roughness: 0.12, metalness: 0.6 });
+    trafficParts.cabin = new THREE.InstancedMesh(cabinGeo, cabinMat, TRAFFIC_COUNT);
+    trafficParts.cabin.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
     const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.25, 10);
     wheelGeo.rotateZ(Math.PI / 2);
     const wheelMat = new THREE.MeshStandardMaterial({ color: 0x08090c, roughness: 0.9 });
-    for (const [wx, wz] of [[-0.92, 1.35], [0.92, 1.35], [-0.92, -1.35], [0.92, -1.35]]) {
-      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-      wheel.position.set(wx, 0.34, wz);
-      g.add(wheel);
-    }
+    trafficParts.wheels = new THREE.InstancedMesh(wheelGeo, wheelMat, TRAFFIC_COUNT * 4);
+    trafficParts.wheels.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+    const headGeo = new THREE.BoxGeometry(0.38, 0.13, 0.06);
     const headMat = new THREE.MeshBasicMaterial({ color: 0xfff0d0, toneMapped: false });
-    for (const hx of [-0.62, 0.62]) {
-      const light = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.13, 0.06), headMat);
-      light.position.set(hx, 0.68, 2.11);
-      g.add(light);
-    }
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.1, 0.05), new THREE.MeshBasicMaterial({ color: 0xff304e, toneMapped: false }));
-    tail.position.set(0, 0.68, -2.11);
-    g.add(tail);
-    scene.add(g);
-    return g;
+    trafficParts.heads = new THREE.InstancedMesh(headGeo, headMat, TRAFFIC_COUNT * 2);
+    trafficParts.heads.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+    const tailGeo = new THREE.BoxGeometry(1.35, 0.1, 0.05);
+    const tailMat = new THREE.MeshBasicMaterial({ color: 0xff304e, toneMapped: false });
+    trafficParts.tails = new THREE.InstancedMesh(tailGeo, tailMat, TRAFFIC_COUNT);
+    trafficParts.tails.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+    for (const mesh of Object.values(trafficParts)) scene.add(mesh);
+  }
+  const placeTrafficPart = (mesh, index, car, lx, ly, lz) => {
+    const cos = Math.cos(car.yaw);
+    const sin = Math.sin(car.yaw);
+    dummy.position.set(
+      car.x + lx * cos + lz * sin,
+      ly,
+      car.z - lx * sin + lz * cos,
+    );
+    dummy.rotation.set(0, car.yaw, 0);
+    dummy.scale.setScalar(1);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(index, dummy.matrix);
   };
 
-  for (let i = 0; i < 10; i += 1) {
+  for (let i = 0; i < TRAFFIC_COUNT; i += 1) {
     const axis = i % 2 === 0 ? 'x' : 'z';
     const line = ROAD_LINES[(i * 3 + 1) % ROAD_LINES.length];
     const dir = i % 4 < 2 ? 1 : -1;
     const lane = dir * 4.2;
-    const car = makeTrafficCar(trafficColors[i % trafficColors.length]);
     const start = -190 + ((i * 47) % 380);
     const speed = rng.range(8, 14);
-    traffic.push({ mesh: car, axis, line, dir, lane, start, speed, t: start });
-    car.rotation.y = axis === 'x' ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
+    trafficParts.body.setColorAt(i, new THREE.Color(trafficColors[i % trafficColors.length]));
+    traffic.push({
+      axis, line, dir, lane, start, speed, t: start,
+      x: axis === 'x' ? start : line + lane,
+      z: axis === 'x' ? line + lane : start,
+      yaw: axis === 'x' ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI),
+    });
   }
+  if (trafficParts.body.instanceColor) trafficParts.body.instanceColor.needsUpdate = true;
 
   // Pedestrians (instanced) --------------------------------------------
   const pedBodyGeo = mergeGeometries([
@@ -1208,6 +1330,9 @@ export function createWorld(scene, renderer) {
     new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0.2 }),
     pedCount,
   );
+  for (const mesh of [pedBody, pedHead, umbMesh]) {
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  }
   const pedPalette = [0x353a4d, 0x4b2d42, 0x1d3c46, 0x443724, 0x24243a, 0x3f3f46, 0x22352e];
   const umbPalette = [0xff2d95, 0x30e8ff, 0xffb44d, 0x9a6bff, 0x1a1c28, 0x3a4150];
   const skinPalette = [0xd9ab8a, 0x9e6c4f, 0x6f4b38, 0xf0c8a6, 0xba8262];
@@ -1584,7 +1709,8 @@ export function createWorld(scene, renderer) {
     });
 
     // Traffic
-    for (const car of traffic) {
+    for (let i = 0; i < traffic.length; i += 1) {
+      const car = traffic[i];
       let speed = car.speed;
       // Brake for the player when directly ahead.
       if (playerPos) {
@@ -1598,14 +1724,27 @@ export function createWorld(scene, renderer) {
         }
       }
       car.t += speed * car.dir * dt;
-      if (car.t > 215) car.t = -215;
-      if (car.t < -215) car.t = 215;
+      if (car.t > trafficLimit) car.t = -trafficLimit;
+      if (car.t < -trafficLimit) car.t = trafficLimit;
       if (car.axis === 'x') {
-        car.mesh.position.set(car.t, 0.02, car.line + car.lane);
+        car.x = car.t;
+        car.z = car.line + car.lane;
       } else {
-        car.mesh.position.set(car.line + car.lane, 0.02, car.t);
+        car.x = car.line + car.lane;
+        car.z = car.t;
       }
+      placeTrafficPart(trafficParts.body, i, car, 0, 0.62, 0);
+      placeTrafficPart(trafficParts.cabin, i, car, 0, 1.05, -0.2);
+      let wheelIndex = i * 4;
+      for (const [wx, wz] of [[-0.92, 1.35], [0.92, 1.35], [-0.92, -1.35], [0.92, -1.35]]) {
+        placeTrafficPart(trafficParts.wheels, wheelIndex, car, wx, 0.34, wz);
+        wheelIndex += 1;
+      }
+      placeTrafficPart(trafficParts.heads, i * 2, car, -0.62, 0.68, 2.11);
+      placeTrafficPart(trafficParts.heads, i * 2 + 1, car, 0.62, 0.68, 2.11);
+      placeTrafficPart(trafficParts.tails, i, car, 0, 0.68, -2.11);
     }
+    for (const mesh of Object.values(trafficParts)) mesh.instanceMatrix.needsUpdate = true;
 
     // Pedestrians
     for (let i = 0; i < pedestrians.length; i += 1) {

@@ -604,6 +604,16 @@ export function buildCar(color = 0x20e6ff) {
     envMapIntensity: 2,
   });
   const accent = glowMat(color === 0xff2d95 ? 0xff6bb5 : color, 1);
+  const headGlow = glowMat(0xe8fbff, 1);
+  const tailMat = new THREE.MeshBasicMaterial({
+    color: 0xff2350,
+    transparent: true,
+    opacity: 1,
+    toneMapped: false,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const exhaustMat = mat(0x181a20, { roughness: 0.3, metalness: 0.9 });
 
   const chassis = new THREE.Mesh(new THREE.BoxGeometry(2.08, 0.32, 4.55), paint);
   chassis.position.y = 0.55;
@@ -629,7 +639,7 @@ export function buildCar(color = 0x20e6ff) {
   roof.position.set(0, 1.36, -0.3);
   bodyGroup.add(roof);
 
-  const splitter = new THREE.Mesh(new THREE.BoxGeometry(2.16, 0.07, 0.42), mat(0x06070a, { roughness: 0.4, metalness: 0.8 }));
+  const splitter = new THREE.Mesh(new THREE.BoxGeometry(2.16, 0.07, 0.42), dark);
   splitter.position.set(0, 0.35, 2.15);
   bodyGroup.add(splitter);
 
@@ -659,34 +669,37 @@ export function buildCar(color = 0x20e6ff) {
 
   // Light blades
   for (const x of [-0.62, 0.62]) {
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.055, 0.06), glowMat(0xe8fbff, 1));
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.055, 0.06), headGlow);
     head.position.set(x, 0.82, 2.22);
     bodyGroup.add(head);
   }
-  const tail = new THREE.Mesh(
-    new THREE.BoxGeometry(1.6, 0.055, 0.05),
-    new THREE.MeshBasicMaterial({
-      color: 0xff2350,
-      transparent: true,
-      opacity: 1,
-      toneMapped: false,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    }),
-  );
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.055, 0.05), tailMat);
   tail.position.set(0, 0.88, -2.24);
   bodyGroup.add(tail);
-  const tailUnder = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.03, 0.04), glowMat(0xff2350, 0.7));
+  const tailUnder = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.03, 0.04), tailMat);
   tailUnder.position.set(0, 0.72, -2.2);
   bodyGroup.add(tailUnder);
 
-  // Wheels
+  // Wheels: tire + rim/spokes are merged into one two-material mesh so all
+  // four wheels cost eight draw calls per car instead of twenty-four.
   const wheelGeo = new THREE.CylinderGeometry(0.37, 0.37, 0.28, 16);
   wheelGeo.rotateZ(Math.PI / 2);
   const tireMat = new THREE.MeshStandardMaterial({ color: 0x08090c, roughness: 0.88 });
   const rimGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.3, 8);
   rimGeo.rotateZ(Math.PI / 2);
   const rimMat = mat(0x252a33, { roughness: 0.32, metalness: 0.9 });
+  const spokeGeos = [];
+  for (let a = 0; a < 4; a += 1) {
+    const spoke = new THREE.BoxGeometry(0.31, 0.055, 0.05);
+    spoke.rotateX((a * Math.PI) / 4);
+    spokeGeos.push(spoke);
+  }
+  const rimMerged = mergeGeometries([rimGeo, ...spokeGeos], false);
+  const wheelMerged = mergeGeometries([wheelGeo, rimMerged], true);
+  wheelGeo.dispose();
+  rimGeo.dispose();
+  spokeGeos.forEach((geo) => geo.dispose());
+  rimMerged.dispose();
   const wheels = [];
   for (const [x, z] of [[-0.98, 1.45], [0.98, 1.45], [-0.98, -1.45], [0.98, -1.45]]) {
     const steer = new THREE.Group();
@@ -694,15 +707,7 @@ export function buildCar(color = 0x20e6ff) {
     group.add(steer);
     const spin = new THREE.Group();
     steer.add(spin);
-    const tire = new THREE.Mesh(wheelGeo, tireMat);
-    spin.add(tire);
-    const rim = new THREE.Mesh(rimGeo, rimMat);
-    spin.add(rim);
-    for (let a = 0; a < 4; a += 1) {
-      const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.31, 0.055, 0.05), rimMat);
-      spoke.rotation.x = (a * Math.PI) / 4;
-      spin.add(spoke);
-    }
+    spin.add(new THREE.Mesh(wheelMerged, [tireMat, rimMat]));
     wheels.push({ steer, spin, front: z > 0 });
   }
 
@@ -730,7 +735,7 @@ export function buildCar(color = 0x20e6ff) {
   });
   const cones = [];
   for (const x of [-0.62, 0.62]) {
-    const pool = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 10.5), headMat.clone());
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 10.5), headMat);
     pool.rotation.x = -Math.PI / 2;
     pool.position.set(x, 0.075, 7.1);
     bodyGroup.add(pool);
@@ -757,7 +762,7 @@ export function buildCar(color = 0x20e6ff) {
   // Exhaust glow nodes
   const exhausts = [];
   for (const x of [-0.48, 0.48]) {
-    const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.2, 8), mat(0x181a20, { roughness: 0.3, metalness: 0.9 }));
+    const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.2, 8), exhaustMat);
     exhaust.rotation.x = Math.PI / 2;
     exhaust.position.set(x, 0.46, -2.31);
     bodyGroup.add(exhaust);
@@ -797,6 +802,39 @@ export function buildCar(color = 0x20e6ff) {
   decal.rotation.z = Math.PI;
   decal.position.set(0, 1.055, 1.18);
   bodyGroup.add(decal);
+
+  // Keep the few meshes whose transforms/opacity are animated per frame.
+  tail.userData.noMerge = true;
+  cones.forEach((cone) => { cone.userData.noMerge = true; });
+
+  // Collapse the static bodywork into one mesh per material. This removes
+  // roughly 25 draw calls from every player car without changing the shape.
+  const bodyBatches = new Map();
+  for (const child of [...bodyGroup.children]) {
+    if (!child.isMesh || child.userData.noMerge) continue;
+    child.updateMatrix();
+    const key = child.material.uuid;
+    let batch = bodyBatches.get(key);
+    if (!batch) {
+      batch = { material: child.material, originals: [], geos: [] };
+      bodyBatches.set(key, batch);
+    }
+    batch.originals.push(child);
+    batch.geos.push(child.geometry.clone().applyMatrix4(child.matrix));
+    bodyGroup.remove(child);
+  }
+  for (const batch of bodyBatches.values()) {
+    const merged = batch.geos.length === 1
+      ? batch.geos[0]
+      : mergeGeometries(batch.geos, false);
+    if (!merged) {
+      batch.originals.forEach((child) => bodyGroup.add(child));
+      batch.geos.forEach((geo) => geo.dispose());
+      continue;
+    }
+    bodyGroup.add(new THREE.Mesh(merged, batch.material));
+    if (batch.geos.length > 1) batch.geos.forEach((geo) => geo.dispose());
+  }
 
   const state = {
     group,
