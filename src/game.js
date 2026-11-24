@@ -44,6 +44,16 @@ const PLAZA_SAFE_RADIUS = 30;
 // breached from a distance where no interaction is shown.
 const SHARD_RANGE = 4.8;
 const SHARD_VEHICLE_RANGE = 6.4;
+// Cars seat a driver plus one partner. Bikes remain single-rider.
+const CAR_PASSENGER_LIMIT = 1;
+const SEAT_DRIVER = 'driver';
+const SEAT_PASSENGER = 'passenger';
+// Sprinting jumps carry noticeably further without turning the district into
+// a trampoline; air control was also loosened so the extra hang time is usable.
+const JUMP_SPEED = 6.8;
+const SPRINT_JUMP_BONUS = 1.12;
+const GRAVITY = 19.5;
+const AIR_ACCELERATION = 7;
 
 // Optional activities live outside the nine-contract ladder. Both gates sit
 // beside the parked vehicles by the plaza so they are visible from spawn.
@@ -209,6 +219,22 @@ const CONTRACTS = [
 const tempVec = new THREE.Vector3();
 const tempVec2 = new THREE.Vector3();
 const tempVec3 = new THREE.Vector3();
+const seatVec = new THREE.Vector3();
+
+function setSeatPosition(target, car, seat) {
+  if (car?.kind === 'car' && seat === SEAT_PASSENGER) {
+    const sin = Math.sin(car.yaw);
+    const cos = Math.cos(car.yaw);
+    target.set(
+      car.x + cos * 0.62 + sin * 0.18,
+      0.62,
+      car.z - sin * 0.62 + cos * 0.18,
+    );
+  } else {
+    target.set(car?.x || 0, 0, car?.z || 0);
+  }
+  return target;
+}
 
 function readStorage(key, fallback) {
   try {
@@ -346,6 +372,7 @@ export class NightfallGame {
     this.localChar = null;
     this.localCharShadow = null;
     this.localCar = null;
+    this.vehicleSeat = null;
     this.cars = [];
     this.shardVisuals = new Map();
     this.localEnemies = [];
@@ -918,6 +945,7 @@ export class NightfallGame {
     for (const car of this.cars) this.scene.remove(car.model.group);
     this.cars = [];
     this.localCar = null;
+    this.vehicleSeat = null;
     const addVehicle = (spawn, index, kind) => {
       const palette = kind === 'bike' ? BIKE_COLORS : CAR_COLORS;
       const color = palette[index % palette.length] ?? spawn.color;
@@ -941,6 +969,7 @@ export class NightfallGame {
         model,
         color,
         occupiedBy: null,
+        passengers: [],
       });
     };
     this.world.carSpawns.forEach((spawn, index) => addVehicle(spawn, index, 'car'));
@@ -981,8 +1010,12 @@ export class NightfallGame {
       if (mode === 'hunt') return `BOUNTY FILE ${index + 1}`;
       return site.name || `DATA CACHE ${index + 1}`;
     };
+    // Crown Heist must mark a car, never a light cycle. Prefer an empty one so
+    // both operatives can board it as driver and passenger.
     const exfilCar = mode === 'vehicle'
-      ? (this.cars.find((car) => !car.occupiedBy) || this.cars[0])
+      ? (this.cars.find((car) => car.kind === 'car' && !car.occupiedBy && !car.passengers?.length)
+        || this.cars.find((car) => car.kind === 'car')
+        || this.cars[0])
       : null;
     const extraction = exfilCar
       ? { x: exfilCar.x, z: exfilCar.z }
@@ -1437,6 +1470,7 @@ export class NightfallGame {
     for (const car of this.cars) {
       if (car.kind !== kind) continue;
       if (car.occupiedBy && car.occupiedBy !== racerId) continue;
+      if (this.vehiclePassengers(car).length) continue;
       const d = dist2D(car.x, car.z, station.x, station.z);
       if (d < bestDistance) {
         bestDistance = d;
@@ -1730,7 +1764,7 @@ export class NightfallGame {
   jump() {
     const p = this.player;
     if (!p || !p.alive || !p.grounded || this.currentMode !== 'foot') return;
-    p.velY = 6.1;
+    p.velY = JUMP_SPEED * (p.sprinting ? SPRINT_JUMP_BONUS : 1);
     p.grounded = false;
     this.audio.jump();
   }
@@ -1771,7 +1805,8 @@ export class NightfallGame {
       p.stamina = Math.min(this.maxStamina, p.stamina + 16 * dt);
       p.moveSpeed = 0;
       if (this.localChar) {
-        if (this.localCar?.kind !== 'bike') {
+        const hideOperator = this.localCar?.kind !== 'bike' && this.vehicleSeat !== SEAT_PASSENGER;
+        if (hideOperator) {
           this.localChar.group.visible = false;
           this.localCharShadow.visible = false;
         }
@@ -1818,7 +1853,7 @@ export class NightfallGame {
     if (wantsSprint) p.stamina = Math.max(0, p.stamina - 14 * dt);
     else p.stamina = Math.min(this.maxStamina, p.stamina + 20 * dt);
 
-    const accel = p.grounded ? 13 : 5;
+    const accel = p.grounded ? 13 : AIR_ACCELERATION;
     p.moveSpeed = damp(p.moveSpeed, moving && canControl ? speedTarget : 0, accel, dt);
     if (p.moveSpeed > 0.02 && moving) {
       p.pos.x += moveX * p.moveSpeed * dt;
@@ -1840,7 +1875,7 @@ export class NightfallGame {
     }
 
     // Vertical movement
-    p.velY -= 19.5 * dt;
+    p.velY -= GRAVITY * dt;
     p.pos.y += p.velY * dt;
     if (p.pos.y <= 0) {
       if (!p.grounded && p.velY < -4.2) this.audio.land();
@@ -1884,6 +1919,28 @@ export class NightfallGame {
     const car = this.localCar;
     if (!car || !this.player) return;
     const p = this.player;
+    if (this.vehicleSeat === SEAT_PASSENGER) {
+      // Only the driver integrates physics. Passengers ride the host-authoritative
+      // car transform and keep their own camera/animation in sync with it.
+      p.pos.set(car.x, 0, car.z);
+      p.bodyYaw = car.yaw;
+      p.velY = 0;
+      p.grounded = true;
+      if (this.localChar) {
+        setSeatPosition(seatVec, car, SEAT_PASSENGER);
+        this.localChar.group.visible = p.alive;
+        this.localChar.group.position.copy(seatVec);
+        this.localChar.group.rotation.y = car.yaw;
+        this.localChar.animate(dt, elapsed, 0, true, false, false, true);
+      }
+      if (this.localCharShadow) this.localCharShadow.visible = false;
+      const gear = car.speed < -0.5 ? 'R' : car.speed < 0.5 ? 'N' : String(clamp(Math.ceil(Math.abs(car.speed) / 11), 1, 6));
+      this.ui.setCarStats(car.speed, car.boost, gear, 0);
+      this.ui.setBoost(car.boost, false);
+      this.ui.setBoosting(false);
+      this.audio.updateCar({ active: true, speed: car.speed, throttle: 0, boosting: false, drifting: false });
+      return;
+    }
     const canControl = this.status === 'playing' && !this.paused && !this.chatOpen && !this.controlsOpen;
     const throttle = canControl
       ? (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) - (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0)
@@ -2109,11 +2166,47 @@ export class NightfallGame {
     this.sendPlayerState(true);
   }
 
+  vehiclePassengers(car) {
+    if (!car) return [];
+    if (!Array.isArray(car.passengers)) car.passengers = [];
+    return car.passengers;
+  }
+
+  canCarryPassenger(car, id = null) {
+    if (!car || car.kind !== 'car') return false;
+    const passengers = this.vehiclePassengers(car);
+    return passengers.includes(id) || passengers.length < CAR_PASSENGER_LIMIT;
+  }
+
+  // One place for driver/passenger cleanup so a disconnect, an exit or a seat
+  // switch cannot leave a ghost occupant steering a car.
+  removeVehicleOccupant(car, id) {
+    if (!car || !id) return;
+    const passengers = this.vehiclePassengers(car);
+    if (car.occupiedBy === id) {
+      car.occupiedBy = null;
+      if (passengers.length) {
+        car.occupiedBy = passengers.shift();
+        if (car.occupiedBy === (this.session?.selfId || 'solo') && this.localCar === car) {
+          this.vehicleSeat = SEAT_DRIVER;
+          this.ui.toast('You are driving now.', 'info', 2000);
+        }
+      } else {
+        car.speed = 0;
+        car.steer = 0;
+      }
+    } else if (passengers.includes(id)) {
+      car.passengers = passengers.filter((occupant) => occupant !== id);
+    }
+  }
+
   nearestCar(maxDistance = 4.6) {
     let best = null;
     let bestDistance = maxDistance;
+    const selfId = this.session?.selfId || 'solo';
     for (const car of this.cars) {
-      if (car.occupiedBy && car.occupiedBy !== this.session?.selfId) continue;
+      const driver = car.occupiedBy;
+      if (driver && driver !== selfId && !this.canCarryPassenger(car, selfId)) continue;
       const d = dist2D(this.player.pos.x, this.player.pos.z, car.x, car.z);
       if (d < bestDistance) {
         bestDistance = d;
@@ -2183,11 +2276,25 @@ export class NightfallGame {
   }
 
   enterCar(car) {
-    if (!this.player || !this.player.alive) return;
+    if (!this.player || !this.player.alive || !car) return;
+    const selfId = this.session?.selfId || 'solo';
+    const passengers = this.vehiclePassengers(car);
+    const joinAsPassenger = !!car.occupiedBy && car.occupiedBy !== selfId;
+    if (joinAsPassenger && !this.canCarryPassenger(car, selfId)) {
+      this.ui.toast(car.kind === 'bike' ? 'Bikes have one seat.' : 'That car is full.', 'warn', 2200);
+      return;
+    }
     this.currentMode = 'car';
     this.localCar = car;
-    car.occupiedBy = this.session?.selfId || 'solo';
-    car.speed = 0;
+    this.vehicleSeat = joinAsPassenger ? SEAT_PASSENGER : SEAT_DRIVER;
+    if (joinAsPassenger) {
+      if (!passengers.includes(selfId)) passengers.push(selfId);
+    } else {
+      car.occupiedBy = selfId;
+      car.passengers = passengers.filter((id) => id !== selfId);
+      car.speed = 0;
+      car.steer = 0;
+    }
     car.boost = car.boost ?? 1;
     car.model.group.position.set(car.x, 0.02, car.z);
     car.model.group.rotation.y = car.yaw;
@@ -2199,9 +2306,9 @@ export class NightfallGame {
     this.player.pos.set(car.x, 0, car.z);
     this.player.bodyYaw = car.yaw;
     if (this.localChar) {
-      // Bikes keep the rider visible so the Blender Ride clip can be seen;
-      // car cockpits still hide the operator to avoid clipping.
-      const showRider = car.kind === 'bike';
+      // Bikes keep the rider visible; car drivers hide to avoid cockpit
+      // clipping, while passengers remain visible in the adjacent seat.
+      const showRider = car.kind === 'bike' || joinAsPassenger;
       this.localChar.group.visible = showRider;
       this.localCharShadow.visible = false;
     }
@@ -2212,8 +2319,10 @@ export class NightfallGame {
     this.ui.setBoost(car.boost, false);
     this.audio.door();
     this.effects.exitCar(new THREE.Vector3(car.x, 0.2, car.z));
-    this.audio.updateCar({ active: true, speed: 0, throttle: 0, boosting: false, drifting: false });
+    this.audio.updateCar({ active: true, speed: car.speed, throttle: 0, boosting: false, drifting: false });
+    if (joinAsPassenger) this.ui.toast('Riding as passenger — the driver controls this vehicle.', 'info', 2400);
     this.sendPlayerState(true);
+    if (this.isHost) this.sendFullState(true);
   }
 
   exitCar() {
@@ -2241,10 +2350,14 @@ export class NightfallGame {
     this.player.bodyYaw = car.yaw;
     this.player.velY = 0;
     this.player.grounded = true;
-    car.occupiedBy = null;
-    car.speed = 0;
-    car.steer = 0;
+    const selfId = this.session?.selfId || 'solo';
+    if (this.vehicleSeat === SEAT_PASSENGER) {
+      car.passengers = this.vehiclePassengers(car).filter((id) => id !== selfId);
+    } else {
+      this.removeVehicleOccupant(car, selfId);
+    }
     this.localCar = null;
+    this.vehicleSeat = null;
     this.currentMode = 'foot';
     this.cameraYaw = car.yaw;
     this.cameraPitch = -0.08;
@@ -2266,12 +2379,15 @@ export class NightfallGame {
     this.audio.updateCar({ active: false, speed: 0, throttle: 0, boosting: false, drifting: false });
     this.effects.exitCar(new THREE.Vector3(car.x, 0.2, car.z));
     this.sendPlayerState(true);
+    if (this.isHost) this.sendFullState(true);
   }
 
   updateCars(dt) {
     const now = performance.now();
     for (const car of this.cars) {
-      if (car === this.localCar) continue;
+      // A local passenger must still follow the remote driver; only the local
+      // driver owns this car's physics.
+      if (car === this.localCar && this.vehicleSeat === SEAT_DRIVER) continue;
       const remote = car.occupiedBy ? this.remotePlayers.get(car.occupiedBy) : null;
       // A race assignment is only real once the rider's player-state reports
       // that exact vehicle. Never let a stale occupancy teleport a car.
@@ -3443,6 +3559,7 @@ export class NightfallGame {
     this.cameraPitch = -0.08;
     this.currentMode = 'foot';
     this.localCar = null;
+    this.vehicleSeat = null;
     this.ui.hideDeath();
     this.ui.setMode('foot');
     this.ui.setVitals(this.maxHealth, this.maxStamina, this.maxHealth, this.maxStamina);
@@ -3530,17 +3647,34 @@ export class NightfallGame {
 
   applyStateCars(cars) {
     if (!Array.isArray(cars)) return;
+    const selfId = this.session?.selfId || 'solo';
     for (const entry of cars) {
       const car = this.cars.find((c) => c.id === entry.id);
       if (!car) continue;
-      if (car === this.localCar) continue;
-      if (entry.o === this.session?.selfId) continue;
-      if (!car.occupiedBy || !this.remotePlayers.has(car.occupiedBy)) {
+      // The local driver owns the car transform; a local passenger must accept
+      // the host's copy so a partner can drive them through Crown Heist.
+      const localDriver = car === this.localCar && this.vehicleSeat === SEAT_DRIVER;
+      if (!localDriver && (!car.occupiedBy || !this.remotePlayers.has(car.occupiedBy))) {
         car.x = entry.x;
         car.z = entry.z;
         car.yaw = entry.yaw;
       }
       car.occupiedBy = entry.o || null;
+      car.passengers = Array.isArray(entry.p)
+        ? entry.p.filter((id) => id && id !== selfId).slice(0, CAR_PASSENGER_LIMIT)
+        : [];
+      if (localDriver) continue;
+      if (car === this.localCar && entry.o === selfId) {
+        if (this.vehicleSeat === SEAT_PASSENGER) {
+          this.vehicleSeat = SEAT_DRIVER;
+          this.ui.toast('You are driving now.', 'info', 2000);
+        }
+      } else if (car === this.localCar && entry.o && entry.o !== selfId
+        && !car.passengers.includes(selfId) && this.vehicleSeat === SEAT_PASSENGER) {
+        // Remote driver still owns the car; keep the local passenger marker
+        // even if a lossy snapshot omitted it.
+        car.passengers.push(selfId);
+      }
     }
   }
 
@@ -3748,6 +3882,7 @@ export class NightfallGame {
       })),
       cars: this.cars.map((car) => ({
         id: car.id, x: car.x, z: car.z, yaw: car.yaw, o: car.occupiedBy,
+        p: this.vehiclePassengers(car).slice(0, CAR_PASSENGER_LIMIT),
         k: car.kind || 'car',
       })),
       alert: this.alertCount || 0,
@@ -3768,6 +3903,7 @@ export class NightfallGame {
       ry: car ? car.yaw : p.bodyYaw,
       inCar: !!car,
       carId: car?.id || null,
+      seat: this.vehicleSeat,
       speed: car ? car.speed : p.moveSpeed,
       boosting: car ? (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) && car.boost > 0.05 && car.speed > 1 : false,
       health: p.health,
@@ -3832,6 +3968,7 @@ export class NightfallGame {
       targetYaw: 0,
       inCar: false,
       carId: null,
+      seat: SEAT_DRIVER,
       speed: 0,
       boosting: false,
       health: 100,
@@ -3855,27 +3992,51 @@ export class NightfallGame {
     remote.health = msg.health ?? 100;
     remote.alive = msg.alive !== false;
 
+    const previousCarId = remote.carId || null;
+    const previousSeat = remote.seat || SEAT_DRIVER;
+    const seat = msg.seat === SEAT_PASSENGER ? SEAT_PASSENGER : SEAT_DRIVER;
+    const nextCarId = msg.carId || null;
+    remote.carId = nextCarId;
+    remote.seat = seat;
+
     if (this.isHost) {
-      const previousCar = remote.carId;
-      remote.carId = msg.carId || null;
-      for (const car of this.cars) {
-        if (car.occupiedBy === remote.id && car.id !== remote.carId) car.occupiedBy = null;
+      // A driver can hand the wheel to a passenger; a passenger simply leaves
+      // their seat without touching the car's speed or transform.
+      if (previousCarId && (previousCarId !== nextCarId || previousSeat !== seat)) {
+        this.removeVehicleOccupant(this.cars.find((c) => c.id === previousCarId), remote.id);
       }
-      if (previousCar && previousCar !== remote.carId) {
-        const car = this.cars.find((c) => c.id === previousCar);
-        if (car && car.occupiedBy === remote.id) car.occupiedBy = null;
-      }
-      if (remote.carId) {
-        const car = this.cars.find((c) => c.id === remote.carId);
+      if (nextCarId) {
+        const car = this.cars.find((c) => c.id === nextCarId);
         if (car) {
-          car.occupiedBy = remote.id;
-          car.x = remote.target.x;
-          car.z = remote.target.z;
-          car.yaw = remote.targetYaw;
+          const passengers = this.vehiclePassengers(car);
+          const wantsPassenger = seat === SEAT_PASSENGER && !!car.occupiedBy && car.occupiedBy !== remote.id;
+          let asPassenger = wantsPassenger && car.kind === 'car'
+            && (passengers.includes(remote.id) || passengers.length < CAR_PASSENGER_LIMIT);
+          if (seat === SEAT_DRIVER && car.occupiedBy && car.occupiedBy !== remote.id
+            && car.kind === 'car' && (passengers.includes(remote.id) || passengers.length < CAR_PASSENGER_LIMIT)) {
+            // Two players can report the driver seat at once; the host keeps
+            // the original driver and seats the late arrival beside them.
+            asPassenger = true;
+          }
+          if (asPassenger) {
+            remote.seat = SEAT_PASSENGER;
+            if (!passengers.includes(remote.id)) passengers.push(remote.id);
+            if (car.occupiedBy === remote.id) car.occupiedBy = null;
+          } else if (car.occupiedBy && car.occupiedBy !== remote.id) {
+            // No seat left: reject the vehicle claim rather than stealing it.
+            remote.carId = null;
+            remote.seat = SEAT_DRIVER;
+          } else {
+            remote.seat = SEAT_DRIVER;
+            if (car.occupiedBy !== remote.id) car.occupiedBy = remote.id;
+            car.x = remote.target.x;
+            car.z = remote.target.z;
+            car.yaw = remote.targetYaw;
+          }
         }
       }
     } else if (this.network?.hostId === remote.id) {
-      remote.carId = msg.carId || null;
+      remote.seat = seat;
     }
   }
 
@@ -4060,7 +4221,7 @@ export class NightfallGame {
     let remote = this.remotePlayers.get(id);
     if (remote) {
       for (const car of this.cars) {
-        if (car.occupiedBy === id) car.occupiedBy = null;
+        this.removeVehicleOccupant(car, id);
       }
       this.scene.remove(remote.char.group);
       this.scene.remove(remote.shadow);
@@ -4116,12 +4277,13 @@ export class NightfallGame {
       remote.moveSpeed = damp(remote.moveSpeed || 0, Math.min(moved, 12), 8, dt);
 
       const ridingBike = remote.inCar && remote.vehicleKind === 'bike';
-      if (remote.inCar && !ridingBike) {
+      const ridingPassenger = remote.inCar && !ridingBike && remote.seat === SEAT_PASSENGER;
+      if (remote.inCar && !ridingBike && !ridingPassenger) {
         remote.char.group.visible = false;
         remote.shadow.visible = false;
       } else {
         remote.char.group.visible = remote.alive;
-        remote.shadow.visible = remote.alive && !ridingBike;
+        remote.shadow.visible = remote.alive && !ridingBike && !ridingPassenger;
         remote.char.group.rotation.y = remote.bodyYaw;
         if (ridingBike) {
           remote.char.group.position.set(
@@ -4129,6 +4291,16 @@ export class NightfallGame {
             0.02,
             remote.pos.z - Math.cos(remote.bodyYaw) * 0.42,
           );
+          remote.char.animate(dt, elapsed, Math.abs(remote.speed || 0) * 0.1, true, false, false, true);
+        } else if (ridingPassenger) {
+          const car = this.cars.find((c) => c.id === remote.carId);
+          if (car) {
+            setSeatPosition(seatVec, car, SEAT_PASSENGER);
+            remote.char.group.position.copy(seatVec);
+            remote.char.group.rotation.y = car.yaw;
+          } else {
+            remote.char.group.position.copy(remote.pos);
+          }
           remote.char.animate(dt, elapsed, Math.abs(remote.speed || 0) * 0.1, true, false, false, true);
         } else {
           remote.char.group.position.copy(remote.pos);
