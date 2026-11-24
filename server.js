@@ -11,7 +11,9 @@ const ROOT = __dirname;
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_PLAYERS = 4;
-const PLAYER_COLORS = [0x36ecff, 0xff2d95, 0xffb44d, 0xa86bff];
+const PLAYER_COLOR_OPTIONS = require('./shared/player-colors.json');
+const PLAYER_COLORS = PLAYER_COLOR_OPTIONS.map((entry) => Number(entry.hex));
+const PLAYER_COLOR_NAMES = new Map(PLAYER_COLOR_OPTIONS.map((entry) => [Number(entry.hex), entry.name]));
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -58,6 +60,23 @@ function cleanName(value) {
     .slice(0, 16) || 'OPERATIVE';
 }
 
+function cleanColor(value) {
+  const raw = typeof value === 'string' && /^0x[0-9a-f]{6}$/i.test(value.trim())
+    ? Number(value.trim())
+    : Number(value);
+  return PLAYER_COLORS.includes(raw) ? raw : null;
+}
+
+function colorLabel(value) {
+  return PLAYER_COLOR_NAMES.get(value) || 'SUIT';
+}
+
+function firstFreeColor(room, preferred) {
+  const used = new Set([...room.players.values()].map((player) => player.color));
+  if (preferred !== null && !used.has(preferred)) return preferred;
+  return PLAYER_COLORS.find((color) => !used.has(color)) ?? preferred ?? PLAYER_COLORS[0];
+}
+
 function roomSnapshot(room) {
   return [...room.players.values()].map((p) => ({ id: p.id, name: p.name, color: p.color }));
 }
@@ -90,8 +109,9 @@ function promoteHost(room) {
   broadcast(room, { type: 'host-changed', hostId: next.id });
 }
 
-function joinRoom(room, ws, name) {
-  const color = PLAYER_COLORS[room.players.size % PLAYER_COLORS.length];
+function joinRoom(room, ws, name, preferredColor = null) {
+  const preferred = cleanColor(preferredColor);
+  const color = firstFreeColor(room, preferred);
   const player = {
     id: `p_${randomId(9)}`,
     name: cleanName(name),
@@ -105,14 +125,18 @@ function joinRoom(room, ws, name) {
   ws.playerId = player.id;
   ws.roomCode = room.code;
 
-  send(ws, {
+  const welcome = {
     type: 'welcome',
     selfId: player.id,
     roomCode: room.code,
     hostId: room.hostId,
     players: existing.concat({ id: player.id, name: player.name, color: player.color }),
     server: true,
-  });
+  };
+  if (preferred !== null && color !== preferred) {
+    welcome.colorNotice = `${colorLabel(preferred)} suit is taken — assigned ${colorLabel(color)}.`;
+  }
+  send(ws, welcome);
   broadcast(room, {
     type: 'peer-join',
     player: { id: player.id, name: player.name, color: player.color },
@@ -224,6 +248,7 @@ wss.on('connection', (ws, req, url) => {
   ws.on('pong', () => { ws.isAlive = true; });
   const action = url.searchParams.get('action') || 'join';
   const name = cleanName(url.searchParams.get('name'));
+  const preferredColor = cleanColor(url.searchParams.get('color'));
 
   if (action === 'create') {
     const code = makeCode();
@@ -235,7 +260,7 @@ wss.on('connection', (ws, req, url) => {
       lastActivity: Date.now(),
     };
     rooms.set(code, room);
-    joinRoom(room, ws, name);
+    joinRoom(room, ws, name, preferredColor);
     console.log(`[room ${code}] created by ${name}`);
   } else {
     const code = String(url.searchParams.get('room') || '').toUpperCase().slice(0, 6);
@@ -250,7 +275,7 @@ wss.on('connection', (ws, req, url) => {
       setTimeout(() => ws.close(), 120);
       return;
     }
-    joinRoom(room, ws, name);
+    joinRoom(room, ws, name, preferredColor);
   }
 
   ws.on('message', (raw) => {
@@ -269,9 +294,39 @@ wss.on('connection', (ws, req, url) => {
       send(ws, { type: 'pong', t: msg.t });
       return;
     }
-    if (['welcome', 'peer-join', 'peer-leave', 'host-changed', 'room-info'].includes(msg.type)) return;
+    if (['welcome', 'peer-join', 'peer-leave', 'host-changed', 'room-info',
+      'color-assigned', 'peer-color'].includes(msg.type)) return;
     const player = room.players.get(ws.playerId);
     if (!player) return;
+
+    if (msg.type === 'color-request') {
+      const requested = cleanColor(msg.color);
+      const current = player.color;
+      if (requested === null) {
+        send(ws, { type: 'color-assigned', color: current, reason: 'Choose a suit colour from the palette.' });
+        return;
+      }
+      if (requested === current) {
+        send(ws, { type: 'color-assigned', color: current, requested });
+        return;
+      }
+      const wornBy = [...room.players.values()].find((other) => other.id !== player.id && other.color === requested);
+      if (wornBy) {
+        send(ws, {
+          type: 'color-assigned',
+          color: current,
+          requested,
+          reason: `${colorLabel(requested)} is already worn by ${wornBy.name}.`,
+        });
+        return;
+      }
+      player.color = requested;
+      send(ws, { type: 'color-assigned', color: requested, requested });
+      broadcast(room, { type: 'peer-color', id: player.id, color: requested }, player.id);
+      console.log(`[room ${room.code}] ${player.name} switched to ${colorLabel(requested)}`);
+      return;
+    }
+
     const relay = { ...msg, from: player.id };
     broadcast(room, relay, player.id);
   });

@@ -502,6 +502,13 @@ button {
   margin-bottom: 6px;
 }
 
+.field__label small {
+  float: right;
+  font-size: 7px;
+  letter-spacing: 0.12em;
+  color: rgba(255, 180, 77, 0.75);
+}
+
 .field__input {
   width: 100%;
   height: 38px;
@@ -2248,6 +2255,49 @@ kbd {
   background: rgba(77, 244, 255, 0.12);
   color: var(--cyan);
   box-shadow: inset 0 -1px 0 var(--cyan);
+}
+
+.color-select button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.color-select button i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--swatch);
+  box-shadow: 0 0 8px var(--swatch);
+}
+
+.color-select button.is-taken,
+.color-select button:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+}
+
+.color-select button.is-active i {
+  outline: 1px solid var(--paper);
+  outline-offset: 2px;
+}
+
+.setting--color {
+  grid-column: 1 / -1;
+}
+
+.setting--color > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setting--color small {
+  font-size: 7px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 180, 77, 0.8);
 }
 
 .setting input[type='range'] {

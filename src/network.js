@@ -1,7 +1,7 @@
 import Peer from 'peerjs';
 import { makeId, makeRoomCode } from './utils.js';
+import { PLAYER_COLORS, normalizePlayerColor, playerColorName } from './colors.js';
 
-const PLAYER_COLORS = [0x36ecff, 0xff2d95, 0xffb44d, 0xa86bff];
 const PEER_PREFIX = 'nightfall-nx-v1-';
 const ROOM_ALPHABET = /^[A-Z0-9]{4,6}$/;
 
@@ -30,6 +30,14 @@ export function sanitizeRoom(code) {
   return String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
 }
 
+function colorParam(value) {
+  return `0x${normalizePlayerColor(value).toString(16).padStart(6, '0')}`;
+}
+
+function otherColor(color) {
+  return PLAYER_COLORS.find((option) => option !== color) || PLAYER_COLORS[0];
+}
+
 export class Network {
   constructor() {
     this.handlers = new Map();
@@ -38,6 +46,8 @@ export class Network {
     this.roomCode = null;
     this.hostId = null;
     this.players = new Map();
+    this.preferredColor = PLAYER_COLORS[0];
+    this.selfColor = PLAYER_COLORS[0];
     this.connected = false;
     this.ws = null;
     this.peer = null;
@@ -68,6 +78,29 @@ export class Network {
     }
   }
 
+  _applyAssignedColor(msg) {
+    const color = normalizePlayerColor(msg.color, this.selfColor);
+    this.selfColor = color;
+    if (this.selfPlayer) this.selfPlayer.color = color;
+    if (this.p2pHostInfo) this.p2pHostInfo.color = color;
+    this.emit('colorAssigned', {
+      color,
+      requested: normalizePlayerColor(msg.requested, null),
+      reason: msg.reason || null,
+      notice: msg.colorNotice || null,
+    });
+  }
+
+  _applyPeerColor(msg) {
+    const id = msg.id;
+    const color = normalizePlayerColor(msg.color, null);
+    if (!id || color === null) return;
+    const player = this.players.get(id);
+    if (player) player.color = color;
+    if (this.p2pHostInfo && id === this.selfId) this.p2pHostInfo.color = color;
+    this.emit('peerColor', { id, color });
+  }
+
   get isHost() {
     return this.selfId !== null && this.selfId === this.hostId;
   }
@@ -80,8 +113,10 @@ export class Network {
     return this.players.get(id);
   }
 
-  async connect({ mode, room, name, useServer }) {
+  async connect({ mode, room, name, useServer, color }) {
     this.name = (name || 'OPERATIVE').slice(0, 16);
+    this.preferredColor = normalizePlayerColor(color, PLAYER_COLORS[0]);
+    this.selfColor = this.preferredColor;
     this._closed = false;
     if (useServer) {
       this.server = true;
@@ -105,6 +140,7 @@ export class Network {
       const params = new URLSearchParams({
         action,
         name: this.name,
+        color: colorParam(this.preferredColor),
       });
       if (code) params.set('room', code);
       const ws = new WebSocket(`${proto}://${window.location.host}/ws?${params.toString()}`);
@@ -151,11 +187,14 @@ export class Network {
           this.roomCode = msg.roomCode;
           this.hostId = msg.hostId;
           this.players = new Map((msg.players || []).filter((p) => p.id !== this.selfId).map((p) => [p.id, p]));
-          this.selfPlayer = (msg.players || []).find((p) => p.id === this.selfId) || {
+          const selfEntry = (msg.players || []).find((p) => p.id === this.selfId);
+          this.selfColor = normalizePlayerColor(msg.color ?? selfEntry?.color, this.preferredColor);
+          this.selfPlayer = selfEntry || {
             id: this.selfId,
             name: this.name,
-            color: PLAYER_COLORS[0],
+            color: this.selfColor,
           };
+          this.selfPlayer.color = this.selfColor;
           this.connected = true;
           this.latency = 0;
           this.emit('ready', {
@@ -165,12 +204,21 @@ export class Network {
             hostId: this.hostId,
             players: [...this.players.values()],
             server: true,
+            colorNotice: msg.colorNotice || null,
           });
           return;
         }
         if (msg.type === 'pong') {
           this.latency = Math.max(1, Math.round(performance.now() - this.pingSentAt));
           this.emit('latency', this.latency);
+          return;
+        }
+        if (msg.type === 'color-assigned') {
+          this._applyAssignedColor(msg);
+          return;
+        }
+        if (msg.type === 'peer-color') {
+          this._applyPeerColor(msg);
           return;
         }
         if (msg.type === 'peer-join') {
@@ -252,7 +300,8 @@ export class Network {
         this.hostId = 'host';
         this.players = new Map();
         this.p2pPlayers = new Map();
-        this.p2pHostInfo = { id: 'host', name: this.name, color: PLAYER_COLORS[0] };
+        this.p2pHostInfo = { id: 'host', name: this.name, color: this.preferredColor };
+        this.selfPlayer = this.p2pHostInfo;
         const peer = buildPeer(PEER_PREFIX + code);
         if (!peer) return;
         this.peer = peer;
@@ -314,7 +363,7 @@ export class Network {
         peer.on('open', () => {
           conn = peer.connect(PEER_PREFIX + code, {
             reliable: true,
-            metadata: { name: this.name, color: PLAYER_COLORS[1] },
+            metadata: { name: this.name, color: colorParam(this.preferredColor) },
           });
           this.p2pGuest = conn;
           this.connections.set('host', conn);
@@ -323,7 +372,7 @@ export class Network {
             this._sendToConnection('host', {
               type: 'hello',
               name: this.name,
-              color: PLAYER_COLORS[1],
+              color: colorParam(this.preferredColor),
             });
           });
           conn.on('data', (data) => this._receiveP2P(data, 'host'));
@@ -367,22 +416,29 @@ export class Network {
     this.connections.set(id, conn);
     conn.on('data', (data) => {
       if (data && data.type === 'hello') {
+        const hostColor = this.p2pHostInfo?.color || this.selfColor;
+        const requested = normalizePlayerColor(data.color, otherColor(hostColor));
+        const color = requested !== hostColor ? requested : otherColor(hostColor);
         const guest = {
           id,
           name: (data.name || 'OPERATIVE').slice(0, 16),
-          color: PLAYER_COLORS[1],
+          color,
         };
         this.p2pGuestMeta = guest;
         this.players.set(id, guest);
         const players = [this.p2pHostInfo, guest];
-        conn.send({
+        const welcome = {
           type: 'welcome',
           selfId: 'guest',
           roomCode: this.roomCode,
           hostId: 'host',
           players,
           server: false,
-        });
+        };
+        if (color !== requested) {
+          welcome.colorNotice = `${playerColorName(requested)} suit is taken — assigned ${playerColorName(color)}.`;
+        }
+        conn.send(welcome);
         this.emit('playerJoin', guest);
         this.emit('notice', { text: `${guest.name} linked into the district.`, level: 'ok' });
         return;
@@ -394,6 +450,7 @@ export class Network {
       this.connections.delete(id);
       this.players.delete(id);
       this.p2pGuest = null;
+      this.p2pGuestMeta = null;
       this.emit('playerLeave', { id, player: null });
       this.emit('notice', { text: 'Your co-op partner disconnected.', level: 'warn' });
     });
@@ -406,11 +463,14 @@ export class Network {
       this.roomCode = data.roomCode;
       this.hostId = data.hostId;
       this.players = new Map((data.players || []).filter((p) => p.id !== this.selfId).map((p) => [p.id, p]));
-      this.selfPlayer = (data.players || []).find((p) => p.id === this.selfId) || {
+      const selfEntry = (data.players || []).find((p) => p.id === this.selfId);
+      this.selfColor = normalizePlayerColor(selfEntry?.color, this.preferredColor);
+      this.selfPlayer = selfEntry || {
         id: this.selfId,
         name: this.name,
-        color: PLAYER_COLORS[1],
+        color: this.selfColor,
       };
+      this.selfPlayer.color = this.selfColor;
       this.connected = true;
       if (this._resolveGuest) {
         this._resolveGuest({
@@ -420,10 +480,23 @@ export class Network {
           hostId: this.hostId,
           players: [...this.players.values()],
           server: false,
+          colorNotice: data.colorNotice || null,
         });
         this._resolveGuest = null;
       }
       this.emit('notice', { text: 'Peer city linked.', level: 'ok' });
+      return;
+    }
+    if (data.type === 'color-assigned') {
+      this._applyAssignedColor(data);
+      return;
+    }
+    if (data.type === 'peer-color') {
+      this._applyPeerColor(data);
+      return;
+    }
+    if (data.type === 'color-request' && this.isHost) {
+      this._handleP2PColorRequest(from, data);
       return;
     }
     if (data.type === 'ping') {
@@ -440,6 +513,56 @@ export class Network {
       return;
     }
     this.emit('message', { ...data, from });
+  }
+
+  _handleP2PColorRequest(from, msg) {
+    const current = this.p2pGuestMeta?.color || this.players.get(from)?.color || otherColor(this.selfColor);
+    const requested = normalizePlayerColor(msg.color, null);
+    if (requested === null) {
+      this._sendToConnection(from, {
+        type: 'color-assigned',
+        color: current,
+        reason: 'Choose a suit colour from the palette.',
+      });
+      return;
+    }
+    if (requested === this.selfColor) {
+      this._sendToConnection(from, {
+        type: 'color-assigned',
+        color: current,
+        requested,
+        reason: `${playerColorName(requested)} is already worn by the host.`,
+      });
+      return;
+    }
+    if (requested === current) {
+      this._sendToConnection(from, { type: 'color-assigned', color: current, requested });
+      return;
+    }
+    if (this.p2pGuestMeta) this.p2pGuestMeta.color = requested;
+    const guest = this.players.get(from);
+    if (guest) guest.color = requested;
+    this._sendToConnection(from, { type: 'color-assigned', color: requested, requested });
+    this.emit('peerColor', { id: from, color: requested });
+  }
+
+  // P2P hosts are the colour authority. Relay clients always ask the server
+  // instead, so this only applies to the two-player fallback.
+  setSelfColor(color) {
+    const requested = normalizePlayerColor(color, null);
+    if (this.mode !== 'p2p' || !this.isHost) return { accepted: false, reason: 'Colour is managed by the server.' };
+    if (requested === null) return { accepted: false, reason: 'Choose a suit colour from the palette.' };
+    const guestColor = this.p2pGuestMeta?.color;
+    if (guestColor && requested === guestColor) {
+      return { accepted: false, color: this.selfColor, reason: `${playerColorName(requested)} is already worn by your partner.` };
+    }
+    if (requested !== this.selfColor) {
+      this.selfColor = requested;
+      if (this.p2pHostInfo) this.p2pHostInfo.color = requested;
+      if (this.selfPlayer) this.selfPlayer.color = requested;
+      this._sendToConnection('guest', { type: 'peer-color', id: this.selfId, color: requested });
+    }
+    return { accepted: true, color: requested };
   }
 
   _startPing() {

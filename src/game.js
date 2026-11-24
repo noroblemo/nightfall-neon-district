@@ -11,6 +11,11 @@ import {
 } from './models.js';
 import { Network, detectGameServer, sanitizeRoom } from './network.js';
 import {
+  normalizePlayerColor,
+  playerColorName,
+  PLAYER_COLORS,
+} from './colors.js';
+import {
   clamp,
   damp,
   dampAngle,
@@ -28,6 +33,7 @@ const QUALITY_KEYS = new Set(['performance', 'balanced', 'cinematic']);
 const NAME_KEY = 'nightfall:name';
 const MUTE_KEY = 'nightfall:muted';
 const VARIANT_KEY = 'nightfall:variant';
+const COLOR_KEY = 'nightfall:color';
 const UPGRADE_KEY = 'nightfall:upgrades';
 const CREDITS_KEY = 'nightfall:credits';
 const CAR_COLORS = [0x20e6ff, 0xff2d95, 0xffb44d, 0xa86bff, 0x6bffb8];
@@ -358,7 +364,8 @@ export class NightfallGame {
     const storedQuality = readStorage(QUALITY_KEY, 'balanced');
     this.quality = QUALITY_KEYS.has(storedQuality) ? storedQuality : 'balanced';
     this.name = readStorage(NAME_KEY, 'GHOST') || 'GHOST';
-    this.myColor = 0x36ecff;
+    this.preferredColor = normalizePlayerColor(readStorage(COLOR_KEY, '0x36ecff'), PLAYER_COLORS[0]);
+    this.myColor = this.preferredColor;
     this.myName = this.name;
     this.variant = normalizeVariant(readStorage(VARIANT_KEY, 'male'));
     this.upgrades = readUpgrades();
@@ -433,6 +440,7 @@ export class NightfallGame {
     this.audio.setMuted(muted);
     if (muteBtn) muteBtn.textContent = muted ? 'SOUND OFF' : 'SOUND ON';
     this.updateQualityButtons();
+    this.updateColorButtons();
     this.updateUpgradeUI();
 
     this.ui.setLoading(1, 'DISTRICT READY');
@@ -538,6 +546,13 @@ export class NightfallGame {
         if (button) this.setVariant(button.dataset.variant);
       });
     });
+
+    document.querySelectorAll('[data-color-group]').forEach((group) => {
+      group.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-color]');
+        if (button) this.requestSuitColor(button.dataset.color);
+      });
+    });
     const upgradeGroup = document.getElementById('upgradeGroup');
     if (upgradeGroup) {
       upgradeGroup.addEventListener('click', (event) => {
@@ -593,6 +608,8 @@ export class NightfallGame {
     net.on('playerJoin', (player) => this.onPlayerJoin(player));
     net.on('playerLeave', (payload) => this.onPlayerLeave(payload));
     net.on('hostChanged', (hostId) => this.onHostChanged(hostId));
+    net.on('colorAssigned', (payload) => this.handleSuitColorAssignment(payload));
+    net.on('peerColor', (payload) => this.handlePeerSuitColor(payload));
     net.on('latency', () => {});
     net.on('notice', ({ text, level }) => {
       this.ui.toast(text, level === 'error' ? 'error' : 'info', 4200);
@@ -640,6 +657,120 @@ export class NightfallGame {
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
+  }
+
+  usedSuitColors() {
+    const used = new Set();
+    for (const player of this.network?.players?.values() || []) {
+      if (player.id !== this.session?.selfId && player.color !== undefined) {
+        used.add(normalizePlayerColor(player.color, null));
+      }
+    }
+    for (const remote of this.remotePlayers.values()) {
+      if (remote.color !== undefined) used.add(normalizePlayerColor(remote.color, null));
+    }
+    used.delete(null);
+    return used;
+  }
+
+  updateColorButtons() {
+    const used = this.usedSuitColors();
+    document.querySelectorAll('[data-color-group] button[data-color]').forEach((button) => {
+      const color = normalizePlayerColor(button.dataset.color, null);
+      if (color === null) return;
+      const active = color === this.myColor;
+      const taken = used.has(color) && !active;
+      button.classList.toggle('is-active', active);
+      button.classList.toggle('is-taken', taken);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      button.disabled = !!this.session?.online && taken;
+      button.title = taken
+        ? `${playerColorName(color)} suit is worn by another operative`
+        : `${playerColorName(color)} suit`;
+    });
+  }
+
+  requestSuitColor(value) {
+    const color = normalizePlayerColor(value, null);
+    if (color === null) return;
+    this.preferredColor = color;
+    writeStorage(COLOR_KEY, `0x${color.toString(16).padStart(6, '0')}`);
+
+    if (!this.session) {
+      this.myColor = color;
+      this.updateColorButtons();
+      return;
+    }
+
+    if (this.usedSuitColors().has(color)) {
+      this.ui.toast(`${playerColorName(color)} suit is already worn by another operative.`, 'warn', 2600);
+      this.updateColorButtons();
+      return;
+    }
+
+    if (!this.session.online) {
+      this.applyAssignedSuitColor(color, `${playerColorName(color)} suit equipped.`);
+      return;
+    }
+
+    // The relay server owns colours in server mode; in P2P the host owns them.
+    if (!this.session.server && this.isHost) {
+      const result = this.network?.setSelfColor(color);
+      if (result?.accepted) {
+        this.applyAssignedSuitColor(result.color, `${playerColorName(result.color)} suit equipped.`);
+      } else {
+        this.ui.toast(result?.reason || 'That suit colour is unavailable.', 'warn', 2600);
+      }
+      this.updateColorButtons();
+      return;
+    }
+
+    if (this.network?.send('color-request', { color })) {
+      this.ui.toast(`Requesting ${playerColorName(color)} suit…`, 'info', 1600);
+    } else {
+      this.ui.toast('Colour request failed — link is offline.', 'error', 2600);
+    }
+    this.updateColorButtons();
+  }
+
+  applyAssignedSuitColor(color, notice = null) {
+    const next = normalizePlayerColor(color, this.myColor);
+    if (next === this.myColor) {
+      this.updateColorButtons();
+      if (notice) this.ui.toast(notice, 'ok', 2600);
+      return;
+    }
+    this.myColor = next;
+    if (this.session) this.session.self.color = next;
+    if (this.network?.selfPlayer) this.network.selfPlayer.color = next;
+    if (this.localChar || this.player) this.rebuildLocalCharacter();
+    this.updateRoster();
+    this.updateColorButtons();
+    if (notice) this.ui.toast(notice, 'ok', 2800);
+  }
+
+  handleSuitColorAssignment({ color, requested, reason, notice } = {}) {
+    const next = normalizePlayerColor(color, this.myColor);
+    const wanted = normalizePlayerColor(requested, null);
+    let message = notice;
+    if (!message && reason && reason !== 'ok') message = reason;
+    if (!message && wanted !== null && wanted === next) message = `${playerColorName(next)} suit equipped.`;
+    if (!message) message = `${playerColorName(next)} suit assigned.`;
+    this.applyAssignedSuitColor(next, message);
+  }
+
+  handlePeerSuitColor({ id, color } = {}) {
+    if (!id) return;
+    const next = normalizePlayerColor(color, null);
+    if (next === null) return;
+    const known = this.network?.players?.get(id);
+    if (known) known.color = next;
+    const remote = this.remotePlayers.get(id);
+    if (remote && remote.color !== next) {
+      remote.color = next;
+      this.rebuildRemoteCharacter(remote, remote.variant || 'male');
+    }
+    this.updateRoster();
   }
 
   updateUpgradeUI() {
@@ -742,6 +873,7 @@ export class NightfallGame {
         mode: kind,
         room,
         name,
+        color: this.preferredColor,
         useServer: this.serverAvailable,
       });
     } catch (err) {
@@ -767,7 +899,7 @@ export class NightfallGame {
     this.beginSession({
       network: null,
       selfId: 'solo',
-      self: { id: 'solo', name: this.name, color: 0x36ecff },
+      self: { id: 'solo', name: this.name, color: this.preferredColor },
       roomCode: null,
       hostId: 'solo',
       players: [],
@@ -783,11 +915,12 @@ export class NightfallGame {
       hostId: payload.hostId,
       roomCode: payload.roomCode || null,
       server: !!payload.server,
-      self: payload.self || { id: payload.selfId, name: this.name, color: 0x36ecff },
+      self: payload.self || { id: payload.selfId, name: this.name, color: this.preferredColor },
     };
     this.isHost = payload.network ? payload.network.isHost : true;
     this.myName = payload.self?.name || this.name;
-    this.myColor = payload.self?.color ?? 0x36ecff;
+    this.myColor = normalizePlayerColor(payload.self?.color, this.preferredColor);
+    if (payload.colorNotice) this.ui.toast(payload.colorNotice, 'warn', 4200);
     this.ui.setBusy(false);
     this.ui.showStartError('');
     this.ui.enterGame();
@@ -849,11 +982,7 @@ export class NightfallGame {
     }
 
     if (this.session.online) {
-      this.ui.updateRoster(
-        { id: this.session.selfId, name: this.myName, color: this.myColor },
-        [...(this.network?.players.values() || [])],
-        this.session.hostId,
-      );
+      this.updateRoster();
       if (this.isHost) {
         this.ui.feed('City link online. Share the room code with your partner.', 'ok', 'LINK');
       } else {
@@ -3937,9 +4066,14 @@ export class NightfallGame {
     let remote = this.remotePlayers.get(id);
     if (remote) {
       if (info.name) remote.name = info.name;
-      if (info.color !== undefined) remote.color = info.color;
+      const nextColor = info.color !== undefined
+        ? normalizePlayerColor(info.color, remote.color)
+        : remote.color;
       const nextVariant = normalizeVariant(info.variant || remote.variant);
-      if (nextVariant !== remote.variant) this.rebuildRemoteCharacter(remote, nextVariant);
+      if (nextVariant !== remote.variant || nextColor !== remote.color) {
+        remote.color = nextColor;
+        this.rebuildRemoteCharacter(remote, nextVariant);
+      }
       return remote;
     }
     const known = this.network?.players?.get(id);
@@ -4265,6 +4399,7 @@ export class NightfallGame {
       [...(this.network?.players.values() || [])],
       this.session.hostId,
     );
+    this.updateColorButtons();
   }
 
   updateRemotes(dt, elapsed) {
