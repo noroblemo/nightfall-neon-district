@@ -229,6 +229,9 @@ export class NightfallGame {
     this.ui = ui;
     this.effects = effects;
     this.audio = audio;
+    // Keep storm audio locked to the visible lightning rather than a second,
+    // independent timer. Weather itself stays host-authoritative.
+    this.world.onLightning = () => this.audio.thunder?.();
     this.setQualityCallback = setQuality || (() => {});
     this.canvas = renderer.domElement;
 

@@ -9,7 +9,7 @@ A browser-based co-op open-world action game with Forza-style arcade driving, bu
 ## Features
 
 - **Open world** — a procedural neon city (~436m across) with buildings, plaza, metro landmarks, dynamic lights, bloom post-processing and a finished, collidable perimeter.
-- **Switchable weather** — rain, clear skies, dense fog, electric storms and snow, with smooth transitions and a distinct soundscape for each: rain patter, city air, foghorns, rolling thunder and icy wind. Press `V` in-game or use the **WEATHER** toggle in the pause menu (the host picks for the room).
+- **Switchable weather** — rain, clear skies, dense fog, electric storms and snow, with smooth transitions and a distinct soundscape for each: rain patter, city air, foghorns, lightning-triggered thunder and icy wind. Press `V` in-game or use the **WEATHER** toggle in the pause menu (the host picks for the room).
 - **Adaptive audio** — an original synthwave score during contracts, plus positional foley for weapons, footsteps, vehicles and pickups. `M` or the pause-menu button mutes everything.
 - **Contract ladder** — nine escalating contracts, from GHOST PROTOCOL through timed circuits, courier runs and bounties to LAST SIGNAL. Clear one and the next begins automatically.
 - **Driving** — arcade supercar physics and Tron-style light cycles with boost, handbrake drifts, tire trails, chase cameras and engine audio. Oriented car/bike hulls stop vehicles and pedestrians from cutting through parked or moving traffic.
@@ -55,7 +55,7 @@ Rebuild them with:
 
 ## Audio and contracts
 
-The soundtrack is fully procedural WebAudio: a 16-bar, 84 BPM D-minor night-drive loop with a weather-adaptive lowpass and dotted-eighth delay. All five weather presets have their own always-running ambience beds with smooth crossfades and unique incidental events (rain drips, clear-sky car passes, foghorns, thunder and ice chimes). A crossfaded 6-second noise buffer, held gain ramps, and a musical clock that keeps running while the music is faded out keep loops and pause/resume free of clicks or restart bursts.
+The soundtrack is fully procedural WebAudio: a 16-bar, 84 BPM D-minor night-drive loop with a weather-adaptive lowpass and dotted-eighth delay. All five weather presets have their own always-running ambience beds with smooth crossfades and unique incidental events (rain drips, clear-sky car passes, foghorns, lightning-triggered thunder and ice chimes). A crossfaded 6-second noise buffer, held gain ramps, and a musical clock that keeps running while the music is faded out keep loops and pause/resume free of clicks or restart bursts.
 
 The nine contracts are distinct missions, not scaled copies of one objective:
 

@@ -374,8 +374,9 @@ export class AudioEngine {
     const music = WEATHER_MUSIC[next] || WEATHER_MUSIC.rain;
     this._ramp(this.musicFilter.frequency, music.cutoff, now, 1.8);
     this._ramp(this.musicDelayWet.gain, music.delay, now, 1.8);
-    const delay = this._weatherEventDelay(next);
-    this.nextAmbientEvent = now + (next === 'storm' ? 1.4 + Math.random() * 1.6 : delay);
+    // Storm thunder is tied to the world's visible lightning instead of this
+    // ambient event clock, so it never drifts away from the flash.
+    this.nextAmbientEvent = next === 'storm' ? Number.POSITIVE_INFINITY : now + this._weatherEventDelay(next);
   }
 
   _weatherEventDelay(id) {
@@ -398,8 +399,9 @@ export class AudioEngine {
 
   _triggerWeatherEvent(id) {
     if (!this.started || this.muted) return;
-    if (id === 'storm') this._thunder();
-    else if (id === 'fog') this._foghorn();
+    // Storm thunder arrives through thunder() when lightning strikes.
+    if (id === 'storm') return;
+    if (id === 'fog') this._foghorn();
     else if (id === 'rain') this._droplet();
     else if (id === 'snow') this._iceChime();
     else if (id === 'clear') this._distantPass();
@@ -407,6 +409,13 @@ export class AudioEngine {
 
   _scene(id) {
     return this.weatherScenes[id]?.gain || this.ambientGain;
+  }
+
+  // Public entry point for the world's lightning flash. Still fully
+  // procedural WebAudio: no sample or downloaded asset is involved.
+  thunder() {
+    if (!this.started || this.muted || !this.ctx) return;
+    this._thunder();
   }
 
   _thunder() {

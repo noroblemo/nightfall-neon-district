@@ -1580,6 +1580,7 @@ export function createWorld(scene, renderer) {
 
   function setWeather(id, instant = false) {
     const preset = getWeather(id);
+    const changed = weather.kind !== preset.id;
     weather.kind = preset.id;
     weather.preset = preset;
     if (instant) {
@@ -1590,7 +1591,11 @@ export function createWorld(scene, renderer) {
       weather.hemi = preset.hemi;
       weather.moonlight = preset.moonlight;
       weather.flash = 0;
-      weather.nextStrike = 4 + Math.random() * 6;
+      // Give storm thunder a short, audible lead-in after the switch, then
+      // let the normal 3.5-10.5s lightning rhythm take over.
+      if (changed) {
+        weather.nextStrike = preset.lightning ? 1.2 + Math.random() * 1.3 : 4 + Math.random() * 6;
+      }
       scene.fog.density = preset.fogDensity;
       scene.fog.color.copy(preset.fogTint);
       sky.skyMat.uniforms.topColor.value.copy(preset.skyColors[0]);
@@ -1630,6 +1635,7 @@ export function createWorld(scene, renderer) {
     dummy,
     weather,
     weatherList: WEATHERS,
+    onLightning: null,
     setWeather,
     getWeatherPreset: getWeather,
     elapsed: 0,
@@ -1664,6 +1670,7 @@ export function createWorld(scene, renderer) {
       if (weather.nextStrike <= 0) {
         weather.flash = 1;
         weather.nextStrike = 3.5 + Math.random() * 7;
+        state.onLightning?.();
       }
     }
     weather.flash = Math.max(0, weather.flash - dt * 2.6);
