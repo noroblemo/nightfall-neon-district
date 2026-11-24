@@ -31,10 +31,62 @@ const UPGRADE_KEY = 'nightfall:upgrades';
 const CREDITS_KEY = 'nightfall:credits';
 const CAR_COLORS = [0x20e6ff, 0xff2d95, 0xffb44d, 0xa86bff, 0x6bffb8];
 const BIKE_COLORS = [0xff2d95, 0x20e6ff, 0xa86bff, 0xffb44d];
-const WEAPON_DAMAGE = 34;
-const MAG_SIZE = 12;
-const MAX_RESERVE = 120;
+const WEAPON_DAMAGE = 36;
+const MAG_SIZE = 18;
+const MAX_RESERVE = 180;
+const FIRE_INTERVAL = 0.1;
+const DRY_FIRE_INTERVAL = 0.32;
+const RELOAD_SECONDS = 1.05;
+const RECOIL_MAX = 0.045;
 const PLAZA_SAFE_RADIUS = 30;
+
+// Optional activities live outside the nine-contract ladder. Both gates sit
+// beside the parked vehicles by the plaza so they are visible from spawn.
+const ACTIVITY_STATIONS = [
+  { kind: 'bike', label: 'BIKE RACE', x: 15, z: -34, color: 0xff2d95 },
+  { kind: 'car', label: 'CAR RACE', x: 7, z: -34, color: 0x20e6ff },
+];
+
+// All gates sit on the road grid, so the races never route through buildings.
+// Host picks one route at random for each run.
+const RACE_ROUTES = {
+  bike: [
+    [
+      { x: 30, z: -30, name: 'START LIGHTS' },
+      { x: 90, z: -30, name: 'ORBITAL STRAIGHT' },
+      { x: 90, z: 30, name: 'AURORA HAIRPIN' },
+      { x: -30, z: 30, name: 'HELIX CROSS' },
+      { x: -30, z: -30, name: 'VANTA RETURN' },
+      { x: 15, z: -34, name: 'FINISH LINE' },
+    ],
+    [
+      { x: 30, z: -30, name: 'START LIGHTS' },
+      { x: 90, z: -30, name: 'ORBITAL STRAIGHT' },
+      { x: 90, z: -150, name: 'NORTH SPRINT' },
+      { x: -30, z: -150, name: 'ECHO BEND' },
+      { x: -30, z: -30, name: 'VANTA RETURN' },
+      { x: 15, z: -34, name: 'FINISH LINE' },
+    ],
+  ],
+  car: [
+    [
+      { x: 30, z: -30, name: 'START LIGHTS' },
+      { x: 150, z: -30, name: 'CHROME STRAIGHT' },
+      { x: 150, z: 90, name: 'NEXUS HOOK' },
+      { x: -30, z: 90, name: 'ECHO SWEEP' },
+      { x: -30, z: -30, name: 'VANTA RETURN' },
+      { x: 7, z: -34, name: 'FINISH LINE' },
+    ],
+    [
+      { x: 30, z: -30, name: 'START LIGHTS' },
+      { x: 150, z: -30, name: 'CHROME STRAIGHT' },
+      { x: 150, z: -150, name: 'ORBITAL RUN' },
+      { x: -30, z: -150, name: 'AURORA BEND' },
+      { x: -30, z: -30, name: 'VANTA RETURN' },
+      { x: 7, z: -34, name: 'FINISH LINE' },
+    ],
+  ],
+};
 
 // Persistent progression. Each track has five levels and a rising credit
 // cost; derived stats are recomputed on purchase so respawns keep upgrades.
@@ -242,6 +294,13 @@ export class NightfallGame {
     this.isHost = false;
     this.mission = null;
     this.missionCount = 0;
+    this.activity = null;
+    this.activityVisuals = [];
+    this.activityStations = [];
+    this.creditedContracts = new Set();
+    this.rewardedActivities = new Set();
+    this.recoilOffset = 0;
+    this.recoilSettle = 0;
     this.completed = false;
     this.resultTimer = 0;
     this.currentMode = 'foot';
@@ -607,7 +666,7 @@ export class NightfallGame {
       this.player.stamina = Math.min(this.maxStamina, this.player.stamina + (key === 'endurance' ? 20 : 0));
       this.player.ammo = Math.min(this.magSize, this.player.ammo + (key === 'firepower' ? 1 : 0));
       this.player.reserve = Math.min(this.reserveMax, this.player.reserve + (key === 'firepower' ? 10 : 0));
-      this.ui.setVitals(this.player.health, this.player.stamina);
+      this.ui.setVitals(this.player.health, this.player.stamina, this.maxHealth, this.maxStamina);
       this.ui.setAmmo(this.player.ammo, this.player.reserve, 0);
     }
     this.ui.toast(`${def.label} upgraded to level ${level + 1}.`, 'ok', 2600);
@@ -702,7 +761,7 @@ export class NightfallGame {
     this.ui.hideDisconnect();
     this.ui.setAlert(0);
     this.ui.setAmmo(this.magSize, this.reserveMax, 0);
-    this.ui.setVitals(this.maxHealth, this.maxStamina);
+    this.ui.setVitals(this.maxHealth, this.maxStamina, this.maxHealth, this.maxStamina);
     this.ui.setCrosshair(true, false, false);
     this.ui.setBoost(1, false);
     this.ui.initMinimap(this.world);
@@ -725,6 +784,12 @@ export class NightfallGame {
     this.cameraYaw = this.world.spawn.rot;
     this.cameraPitch = -0.08;
     this.mission = null;
+    this.activity = null;
+    this.clearRaceVisuals();
+    this.recoilOffset = 0;
+    this.recoilSettle = 0;
+    this.rewardedActivities.clear();
+    this.creditedContracts.clear();
     this.localCar = null;
     this.remotePlayers.clear();
     this.remoteEnemies.clear();
@@ -734,6 +799,7 @@ export class NightfallGame {
 
     this.createLocalCharacter(this.myColor);
     this.initCars();
+    this.createActivityStations();
     this.world.extractionGroup.visible = false;
 
     if (this.isHost) {
@@ -756,6 +822,7 @@ export class NightfallGame {
     } else {
       this.ui.feed('Solo patrol engaged. Contract ladder is live in the district.', 'ok', 'CONTRACT');
     }
+    this.ui.feed('Random races are live: BIKE RACE and CAR RACE gates by the plaza. Press G to start.', 'info', 'ACTIVITY');
     this.ui.toast('Click the city to take control.', 'info', 3600);
     this.ui.setLockHint(true);
     this.requestPointerLock();
@@ -828,7 +895,7 @@ export class NightfallGame {
       deathTimer: 0,
       wasInCar: false,
     };
-    this.ui.setVitals(this.player.health, this.player.stamina);
+    this.ui.setVitals(this.player.health, this.player.stamina, this.maxHealth, this.maxStamina);
     this.ui.setAmmo(this.player.ammo, this.player.reserve, 0);
     this.cameraYaw = spawn.rot;
     this.cameraPitch = -0.08;
@@ -868,6 +935,7 @@ export class NightfallGame {
   }
 
   startMission() {
+    if (!this.isHost) return;
     this.audio.setMusicActive?.(true);
     this.missionCount += 1;
     const contractDef = CONTRACTS[(this.missionCount - 1) % CONTRACTS.length];
@@ -947,6 +1015,7 @@ export class NightfallGame {
       requireVehicle: mode === 'circuit',
       lastSplit: 0,
     };
+    this.resupply(false);
     this.completed = false;
     this.resultTimer = 0;
     this.extractWasInside = false;
@@ -1021,6 +1090,9 @@ export class NightfallGame {
         break;
       case 'KeyQ':
         this.sendMapPing();
+        break;
+      case 'KeyG':
+        this.requestActivity();
         break;
       case 'KeyV':
         this.cycleWeather();
@@ -1172,6 +1244,8 @@ export class NightfallGame {
     this.pings.push({
       id,
       name: name || 'ALLY',
+      x,
+      z,
       position: new THREE.Vector3(x, 2.3, z),
       born: this.elapsed,
       color,
@@ -1224,6 +1298,361 @@ export class NightfallGame {
     this.selectWeather(next.id);
   }
 
+  // --- Optional world activities -----------------------------------------
+  // Races are deliberately separate from CONTRACTS: the nine-rung ladder stays
+  // unchanged, while these gates are available from the moment you spawn.
+  disposeGroup(group) {
+    if (!group) return;
+    this.scene.remove(group);
+    group.traverse((obj) => {
+      if (!obj.isMesh) return;
+      obj.geometry?.dispose?.();
+      if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose?.());
+      else obj.material?.dispose?.();
+    });
+  }
+
+  createActivityStations() {
+    for (const station of this.activityStations) this.disposeGroup(station.group);
+    this.activityStations = ACTIVITY_STATIONS.map((station) => {
+      const group = new THREE.Group();
+      group.position.set(station.x, 0.03, station.z);
+      const material = new THREE.MeshBasicMaterial({
+        color: station.color,
+        transparent: true,
+        opacity: 0.72,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      });
+      const pad = new THREE.Mesh(new THREE.RingGeometry(3.4, 4.2, 40), material);
+      pad.rotation.x = -Math.PI / 2;
+      group.add(pad);
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.18, 11, 8, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: station.color,
+          transparent: true,
+          opacity: 0.16,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          toneMapped: false,
+        }),
+      );
+      beam.position.y = 5.5;
+      group.add(beam);
+      for (const side of [-1, 1]) {
+        const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.6, 0.22), material);
+        pylon.position.set(side * 3.6, 1.8, 0);
+        group.add(pylon);
+      }
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.22, 0.22), material);
+      bar.position.y = 3.6;
+      group.add(bar);
+      this.scene.add(group);
+      return { ...station, group };
+    });
+  }
+
+  clearRaceVisuals() {
+    for (const group of this.activityVisuals) this.disposeGroup(group);
+    this.activityVisuals = [];
+  }
+
+  rebuildRaceVisuals() {
+    this.clearRaceVisuals();
+    const activity = this.activity;
+    if (!activity) return;
+    const color = activity.kind === 'bike' ? 0xff2d95 : 0x20e6ff;
+    activity.checkpoints.forEach((point, index) => {
+      const group = new THREE.Group();
+      group.position.set(point.x, 0.04, point.z);
+      const next = activity.checkpoints[index + 1];
+      if (next) group.rotation.y = Math.atan2(next.x - point.x, next.z - point.z);
+      const material = new THREE.MeshBasicMaterial({
+        color: index === activity.checkpoints.length - 1 ? 0xffd166 : color,
+        transparent: true,
+        opacity: 0.78,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      });
+      const pad = new THREE.Mesh(new THREE.RingGeometry(3.2, 4.4, 40), material);
+      pad.rotation.x = -Math.PI / 2;
+      group.add(pad);
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.12, 12, 8, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: index === activity.checkpoints.length - 1 ? 0xffd166 : color,
+          transparent: true,
+          opacity: 0.14,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          toneMapped: false,
+        }),
+      );
+      beam.position.y = 6;
+      group.add(beam);
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(3.8, 0.16, 8, 36, Math.PI), material);
+      arch.position.y = 0.2;
+      group.add(arch);
+      this.scene.add(group);
+      this.activityVisuals.push(group);
+    });
+  }
+
+  nearestActivityStation(pos, maxDistance = 7.5) {
+    let best = null;
+    let bestDistance = maxDistance;
+    for (const station of ACTIVITY_STATIONS) {
+      const d = dist2D(pos.x, pos.z, station.x, station.z);
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = station;
+      }
+    }
+    return best;
+  }
+
+  findRaceVehicle(kind, station, racerId) {
+    let best = null;
+    let bestDistance = 9;
+    for (const car of this.cars) {
+      if (car.kind !== kind) continue;
+      if (car.occupiedBy && car.occupiedBy !== racerId) continue;
+      const d = dist2D(car.x, car.z, station.x, station.z);
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = car;
+      }
+    }
+    return best;
+  }
+
+  requestActivity(kind = null) {
+    if (!this.session || !this.player?.alive || this.status !== 'playing') return;
+    if (this.activity?.phase === 'running') {
+      this.ui.toast('A race is already live. Finish it before starting another.', 'info', 2200);
+      return;
+    }
+    const station = kind
+      ? ACTIVITY_STATIONS.find((s) => s.kind === kind)
+      : this.nearestActivityStation(this.player.pos);
+    if (!station || dist2D(this.player.pos.x, this.player.pos.z, station.x, station.z) > 7.5) {
+      this.ui.toast('Stand at a BIKE RACE or CAR RACE gate to start it.', 'warn', 2600);
+      return;
+    }
+    if (!this.isHost) {
+      this.network?.send('activity-request', { kind: station.kind });
+      this.ui.toast(`${station.label} request sent to the host.`, 'info', 1800);
+      return;
+    }
+    this.startActivity(station.kind);
+  }
+
+  handleActivityRequest(msg) {
+    if (!this.isHost) return;
+    const station = ACTIVITY_STATIONS.find((s) => s.kind === msg.kind);
+    const remote = this.remotePlayers.get(msg.from);
+    if (!station || !remote?.alive) return;
+    if (dist2D(remote.pos.x, remote.pos.z, station.x, station.z) > 8.5) return;
+    this.startActivity(station.kind, msg.from);
+  }
+
+  startActivity(kind, racerId = this.session?.selfId || 'solo') {
+    if (!this.isHost || !this.player?.alive || this.status !== 'playing') return;
+    if (this.activity?.phase === 'running') {
+      this.ui.toast('A race is already live.', 'info', 2000);
+      return;
+    }
+    const station = ACTIVITY_STATIONS.find((s) => s.kind === kind);
+    if (!station) return;
+    const vehicle = this.findRaceVehicle(kind, station, racerId);
+    if (!vehicle) {
+      this.ui.toast(`No ${kind === 'bike' ? 'light cycle' : 'car'} is parked at that gate.`, 'warn', 2400);
+      return;
+    }
+    const routes = RACE_ROUTES[kind] || [];
+    const route = routes[Math.floor(Math.random() * routes.length)] || [];
+    const isBike = kind === 'bike';
+    const limit = isBike ? 85 : 105;
+    this.activity = {
+      id: `${kind}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      kind,
+      label: isBike ? 'BIKE RACE' : 'CAR RACE',
+      phase: 'running',
+      checkpoints: route.map((point, index) => ({
+        id: `gate-${index + 1}`,
+        order: index,
+        x: point.x,
+        z: point.z,
+        name: point.name,
+      })),
+      next: 0,
+      elapsed: 0,
+      timeLimit: limit,
+      timeRemaining: limit,
+      reward: isBike ? 650 : 850,
+      racerId,
+      winnerId: null,
+      winnerName: '',
+      finishIn: 0,
+      lastSplit: 0,
+    };
+    this.rebuildRaceVisuals();
+    // State first: the guest must know the race id before the mount command.
+    this.sendFullState(true);
+    if (racerId === (this.session?.selfId || 'solo')) {
+      this.enterCar(vehicle);
+    } else {
+      vehicle.occupiedBy = racerId;
+      this.network?.send('activity-enter', {
+        vehicleId: vehicle.id,
+        raceId: this.activity.id,
+        racerId,
+      });
+    }
+    this.ui.showMissionBanner(
+      this.activity.label,
+      'RANDOM ACTIVITY — HIT EVERY GATE IN ORDER',
+      'NEW ACTIVITY',
+      4600,
+    );
+    this.ui.feed(
+      `${this.activity.label} launched. Gate 1: ${this.activity.checkpoints[0]?.name || 'START LIGHTS'}.`,
+      'ok',
+      'ACTIVITY',
+    );
+    this.audio.pickup();
+  }
+
+  handleActivityEnter(msg) {
+    if (this.isHost || !this.activity || msg.raceId !== this.activity.id) return;
+    if (msg.racerId !== (this.session?.selfId || 'solo')) return;
+    const car = this.cars.find((c) => c.id === msg.vehicleId);
+    if (car && car.kind === this.activity.kind && this.currentMode !== 'car') this.enterCar(car);
+  }
+
+  updateActivity(dt) {
+    const activity = this.activity;
+    if (!activity) return;
+    if (activity.phase === 'finished' || activity.phase === 'failed') {
+      activity.finishIn = Math.max(0, (activity.finishIn || 0) - dt);
+      if (this.isHost && activity.finishIn <= 0) this.endActivity();
+      return;
+    }
+
+    if (!this.isHost) {
+      // Guests mirror the host clock between authoritative snapshots.
+      activity.elapsed = (activity.elapsed || 0) + dt;
+      activity.timeRemaining = Math.max(0, (activity.timeRemaining ?? activity.timeLimit) - dt);
+      return;
+    }
+
+    activity.elapsed += dt;
+    activity.timeRemaining = Math.max(0, (activity.timeRemaining ?? activity.timeLimit) - dt);
+    const racers = [];
+    const selfId = this.session?.selfId || 'solo';
+    if (this.player?.alive && this.currentMode === 'car' && this.localCar?.kind === activity.kind) {
+      racers.push({ id: selfId, name: this.myName, pos: this.player.pos });
+    }
+    for (const remote of this.remotePlayers.values()) {
+      if (remote.alive && remote.inCar && remote.vehicleKind === activity.kind) {
+        racers.push({ id: remote.id, name: remote.name, pos: remote.pos });
+      }
+    }
+    const gate = activity.checkpoints[activity.next];
+    if (gate) {
+      const radius = activity.kind === 'bike' ? 7 : 7.5;
+      for (const racer of racers) {
+        if (dist2D(racer.pos.x, racer.pos.z, gate.x, gate.z) > radius) continue;
+        this.advanceRace(racer, gate);
+        break;
+      }
+    }
+    if (activity.timeRemaining <= 0 && this.activity?.phase === 'running') {
+      this.failActivity('TIME EXPIRED');
+    }
+  }
+
+  advanceRace(racer, gate) {
+    const activity = this.activity;
+    if (!activity || activity.phase !== 'running') return;
+    const split = Math.max(0, activity.elapsed - (activity.lastSplit || 0));
+    activity.lastSplit = activity.elapsed;
+    activity.next += 1;
+    this.audio.pickup();
+    if (activity.next >= activity.checkpoints.length) {
+      this.completeActivity(racer.id, racer.name);
+      return;
+    }
+    const nextGate = activity.checkpoints[activity.next];
+    this.ui.feed(`${racer.name.toUpperCase()} cleared ${gate.name} — ${split.toFixed(1)}s split.`, 'ok', 'RACE');
+    if (racer.id === (this.session?.selfId || 'solo')) {
+      this.ui.toast(`Gate ${activity.next}/${activity.checkpoints.length} — ${nextGate.name}`, 'ok', 1800);
+      this.addReserve(6, false);
+    }
+    this.sendFullState(true);
+  }
+
+  awardActivityCredit(activity) {
+    if (!activity || this.rewardedActivities.has(activity.id)) return;
+    this.rewardedActivities.add(activity.id);
+    this.credits += activity.reward || 0;
+    writeStorage(CREDITS_KEY, String(Math.floor(this.credits)));
+    this.updateUpgradeUI();
+    this.resupply(false);
+    this.ui.toast(`+${activity.reward || 0} CR race reward. Ammo restocked.`, 'ok', 3400);
+  }
+
+  completeActivity(winnerId, winnerName) {
+    const activity = this.activity;
+    if (!activity || activity.phase !== 'running') return;
+    activity.phase = 'finished';
+    activity.winnerId = winnerId;
+    activity.winnerName = winnerName || 'ALLY';
+    activity.finishIn = 8;
+    const finish = activity.checkpoints[activity.checkpoints.length - 1];
+    this.effects.explosion(
+      new THREE.Vector3(finish?.x || 0, 2, finish?.z || 0),
+      activity.kind === 'bike' ? 0xff2d95 : 0x20e6ff,
+      1.5,
+    );
+    this.ui.showMissionBanner(
+      activity.label,
+      `${activity.winnerName.toUpperCase()} TOOK THE FLAG`,
+      'RACE COMPLETE',
+      4600,
+    );
+    this.ui.feed(`${activity.winnerName} won the ${activity.label} — ${activity.reward} CR.`, 'ok', 'RACE');
+    if (winnerId === (this.session?.selfId || 'solo')) this.awardActivityCredit(activity);
+    this.audio.pickup();
+    this.sendFullState(true);
+  }
+
+  failActivity(reason = 'TIME EXPIRED') {
+    const activity = this.activity;
+    if (!activity || activity.phase !== 'running') return;
+    activity.phase = 'failed';
+    activity.winnerId = null;
+    activity.winnerName = '';
+    activity.finishIn = 6;
+    this.ui.showMissionBanner(activity.label, `${reason} — RACE CLOSED`, 'ACTIVITY FAILED', 4000);
+    this.ui.feed(`${activity.label} ended: ${reason.toLowerCase()}.`, 'warn', 'RACE');
+    this.sendFullState(true);
+  }
+
+  endActivity() {
+    if (!this.activity) return;
+    this.activity = null;
+    this.clearRaceVisuals();
+    if (this.isHost) this.sendFullState(true);
+  }
+
   jump() {
     const p = this.player;
     if (!p || !p.alive || !p.grounded || this.currentMode !== 'foot') return;
@@ -1250,14 +1679,14 @@ export class NightfallGame {
     if (p.fireCooldown > 0) p.fireCooldown = Math.max(0, p.fireCooldown - dt);
     if (p.reloading > 0) {
       p.reloading = Math.max(0, p.reloading - dt);
-      this.ui.setAmmo(p.ammo, p.reserve, 1 - p.reloading / 1.35);
+      this.ui.setAmmo(p.ammo, p.reserve, 1 - p.reloading / RELOAD_SECONDS);
       if (p.reloading === 0) this.finishReload();
     }
 
     // Slow out-of-combat regeneration so a long co-op run stays playable.
-    if (p.health > 0 && p.health < 100 && this.elapsed - p.lastDamageAt > 6) {
+    if (p.health > 0 && p.health < this.maxHealth && this.elapsed - p.lastDamageAt > 6) {
       p.health = Math.min(this.maxHealth, p.health + 9 * dt);
-      this.ui.setVitals(p.health, p.stamina);
+      this.ui.setVitals(p.health, p.stamina, this.maxHealth, this.maxStamina);
     }
 
     const canControl = this.status === 'playing' && !this.paused && !this.chatOpen && this.controlsOpen === false;
@@ -1912,6 +2341,15 @@ export class NightfallGame {
       this.ui.setInteraction('', false);
       return;
     }
+    if (this.activity?.phase === 'running') {
+      this.ui.setInteraction(`RACE LIVE — GATE ${this.activity.next + 1}/${this.activity.checkpoints.length}`, true, 'G');
+      return;
+    }
+    const station = this.nearestActivityStation(this.player.pos, 6.8);
+    if (station) {
+      this.ui.setInteraction(`START ${station.label}`, true, 'G');
+      return;
+    }
     const shard = this.nearestShard(4.8);
     if (shard) {
       const verb = {
@@ -2067,10 +2505,7 @@ export class NightfallGame {
           }
         }
         if (this.mission.shards.every((s) => s.collected)) {
-          this.mission.phase = 'extract';
-          this.world.extractionGroup.visible = true;
-          this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL RELAYS UPLOADED', 5200);
-          this.ui.feed('All relays uploaded. Extraction gate is live.', 'ok', 'EXTRACT');
+          this.onAllCachesSecured();
         }
       }
       if (this.mission.phase === 'extract' || this.mission.phase === 'extracting') {
@@ -2086,16 +2521,16 @@ export class NightfallGame {
         const radius = this.mission.mode === 'vehicle' ? 10 : 8.6;
         const localInside = this.player?.alive
           && dist2D(this.player.pos.x, this.player.pos.z, ex.x, ex.z) < radius
-          && (this.mission.mode !== 'vehicle' || this.currentMode === 'car');
+          && (this.mission.mode !== 'vehicle' || this.localCar?.id === this.mission.extractCarId);
         let allInside = localInside;
         for (const remote of this.remotePlayers.values()) {
           if (!remote.alive) {
             allInside = false;
             continue;
           }
-          const px = remote.pos.x;
-          const pz = remote.pos.z;
-          if (dist2D(px, pz, ex.x, ex.z) > radius) allInside = false;
+          const inMarkedCar = this.mission.mode !== 'vehicle'
+            || remote.carId === this.mission.extractCarId;
+          if (dist2D(remote.pos.x, remote.pos.z, ex.x, ex.z) > radius || !inMarkedCar) allInside = false;
         }
         if (allInside) {
           if (this.mission.phase === 'extract') {
@@ -2148,9 +2583,12 @@ export class NightfallGame {
     const contractName = this.mission.contractName || 'GHOST PROTOCOL';
     const cacheCount = this.mission.shards?.length || 3;
     this.mission.phase = 'complete';
-    this.mission.score += (this.mission.scoreBonus || 3000)
+    // Overtime deliberately zeroes the bonus; never resurrect it with `||`.
+    this.mission.score += (this.mission.scoreBonus ?? 3000)
       + Math.round(Math.max(0, 1600 - this.mission.elapsed * 3));
     const earned = Math.max(350, Math.round(this.mission.score / 12));
+    this.mission.resultId = `${this.mission.contract}-${Date.now()}`;
+    if (this.activity?.phase === 'running') this.endActivity();
     this.credits += earned;
     writeStorage(CREDITS_KEY, String(Math.floor(this.credits)));
     this.updateUpgradeUI();
@@ -2199,27 +2637,57 @@ export class NightfallGame {
     this.requestPointerLock();
   }
 
+  // One validation path for local and guest breaches. Guests used to skip
+  // order, vehicle and kill gates, which desynced the host's contract ladder.
+  shardCollectionError(shard, collector) {
+    const mission = this.mission;
+    if (!mission || mission.phase !== 'collect' || !shard || shard.collected) return 'Cache unavailable.';
+    const mode = mission.mode;
+    const ordered = mode === 'sequence' || mode === 'circuit' || mode === 'courier';
+    if (ordered && shard.order !== mission.breached) {
+      const noun = mode === 'circuit' ? 'checkpoint' : mode === 'courier' ? 'drop' : 'grid node';
+      return `Hit ${noun} ${mission.breached + 1} first.`;
+    }
+    if (mission.requireVehicle && !collector.inCar) {
+      return 'Mount a light cycle or take a car to run this route.';
+    }
+    if (mission.requiredKills && mission.kills < mission.requiredKills) {
+      return `Neutralize ${mission.requiredKills - mission.kills} more security units.`;
+    }
+    const range = mission.requireVehicle ? 7 : 6.6;
+    if (dist2D(collector.pos.x, collector.pos.z, shard.x, shard.z) > range) return 'Get closer to the cache.';
+    return null;
+  }
+
+  onAllCachesSecured() {
+    if (!this.mission || this.mission.phase !== 'collect') return;
+    if (!this.mission.shards.every((s) => s.collected)) return;
+    this.mission.phase = 'extract';
+    this.world.extractionGroup.visible = true;
+    if (this.mission.mode === 'vehicle') {
+      this.ui.showMissionBanner('EXFIL READY', 'BRING THE MARKED CAR INTO THE RING', 'ALL CACHES SECURED', 5200);
+      this.ui.feed('Caches secured. Drive the marked car into the exfil ring.', 'ok', 'EXFIL');
+      this.ui.toast('Exfil unlocked — get to the marked car.', 'ok', 4000);
+    } else {
+      this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL CACHES SECURED', 5200);
+      this.ui.feed('All caches secured. Extraction gate is live at the plaza.', 'ok', 'EXTRACT');
+      this.ui.toast('Extraction unlocked — get to the plaza.', 'ok', 4000);
+    }
+  }
+
   hostCollectShard(shardId) {
     if (!this.isHost || !this.mission || this.mission.phase !== 'collect') return;
     const shard = this.mission.shards.find((s) => s.id === shardId);
-    if (!shard || shard.collected) return;
+    const error = this.shardCollectionError(shard, {
+      pos: this.player.pos,
+      inCar: this.currentMode === 'car',
+      name: this.myName,
+    });
+    if (error) {
+      this.ui.toast(error, 'warn', 2400);
+      return;
+    }
     const mode = this.mission.mode;
-    const ordered = mode === 'sequence' || mode === 'circuit' || mode === 'courier';
-    if (ordered && shard.order !== this.mission.breached) {
-      const noun = mode === 'circuit' ? 'checkpoint' : mode === 'courier' ? 'drop' : 'grid node';
-      this.ui.toast(`Hit ${noun} ${this.mission.breached + 1} first.`, 'warn', 2200);
-      return;
-    }
-    if (mode === 'circuit' && this.currentMode !== 'car') {
-      this.ui.toast('Mount a light cycle or take a car to run the circuit.', 'warn', 2200);
-      return;
-    }
-    if (this.mission.requiredKills && this.mission.kills < this.mission.requiredKills) {
-      this.ui.toast(`Neutralize ${this.mission.requiredKills - this.mission.kills} more security units.`, 'warn', 2200);
-      return;
-    }
-    const distance = dist2D(this.player.pos.x, this.player.pos.z, shard.x, shard.z);
-    if (distance > (mode === 'circuit' ? 6.6 : 6.2)) return;
     this.applyShardCollected(shard, this.myName, true);
     if (mode === 'circuit') {
       const split = Math.max(0, this.mission.elapsed - (this.mission.lastSplit || 0));
@@ -2231,19 +2699,7 @@ export class NightfallGame {
     this.mission.breached += 1;
     this.mission.score += mode === 'circuit' ? 700 : 500;
     this.network?.send('shard-collected', { shardId: shard.id, by: this.session?.selfId, name: this.myName });
-    if (this.mission.shards.every((s) => s.collected)) {
-      this.mission.phase = 'extract';
-      this.world.extractionGroup.visible = true;
-      if (this.mission.mode === 'vehicle') {
-        this.ui.showMissionBanner('EXFIL READY', 'BRING THE MARKED CAR INTO THE RING', 'ALL CACHES SECURED', 5200);
-        this.ui.feed('Caches secured. Drive the marked car into the exfil ring.', 'ok', 'EXFIL');
-        this.ui.toast('Exfil unlocked — get to the marked car.', 'ok', 4000);
-      } else {
-        this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL CACHES SECURED', 5200);
-        this.ui.feed('All caches secured. Extraction gate is live at the plaza.', 'ok', 'EXTRACT');
-        this.ui.toast('Extraction unlocked — get to the plaza.', 'ok', 4000);
-      }
-    }
+    this.onAllCachesSecured();
     this.sendFullState(true);
   }
 
@@ -2257,6 +2713,7 @@ export class NightfallGame {
     }
     this.effects.pickup(new THREE.Vector3(shard.x, 1.7, shard.z), 0x4ff5ff);
     this.audio.pickup();
+    this.addReserve(14, true);
     if (announce) {
       this.ui.feed(`${(byName || 'ALLY').toUpperCase()} breached ${shard.name || 'a data cache'}.`, 'ok', 'CACHE');
     }
@@ -2274,11 +2731,31 @@ export class NightfallGame {
     }
   }
 
+  addReserve(amount, announce = false) {
+    const p = this.player;
+    if (!p || amount <= 0) return;
+    const added = Math.min(Math.floor(amount), Math.max(0, this.reserveMax - p.reserve));
+    if (added <= 0) return;
+    p.reserve += added;
+    this.ui.setAmmo(p.ammo, p.reserve, p.reloading > 0 ? 1 - p.reloading / RELOAD_SECONDS : 0);
+    if (announce) this.ui.feed(`Ammo cache recovered — +${added} rounds.`, 'ok', 'RESUPPLY');
+  }
+
+  resupply(announce = true) {
+    const p = this.player;
+    if (!p) return;
+    p.ammo = this.magSize;
+    p.reserve = this.reserveMax;
+    p.reloading = 0;
+    this.ui.setAmmo(p.ammo, p.reserve, 0);
+    if (announce) this.ui.feed('ARC-9 resupplied — magazine and reserve full.', 'ok', 'RESUPPLY');
+  }
+
   startReload() {
     const p = this.player;
     if (!p || !p.alive || this.currentMode === 'car') return;
     if (p.reloading > 0 || p.ammo >= this.magSize || p.reserve <= 0) return;
-    p.reloading = 1.35;
+    p.reloading = RELOAD_SECONDS;
     this.audio.reload();
   }
 
@@ -2297,6 +2774,14 @@ export class NightfallGame {
     if (!p || !p.alive) {
       this.mouseDown = false;
       return;
+    }
+    if (this.recoilOffset > 0) {
+      if (this.recoilSettle > 0) this.recoilSettle = Math.max(0, this.recoilSettle - dt);
+      else {
+        const recover = Math.min(this.recoilOffset, 0.1 * dt);
+        this.recoilOffset -= recover;
+        this.cameraPitch = clamp(this.cameraPitch - recover, -1.02, 0.68);
+      }
     }
     if (this.currentMode !== 'foot' || this.status !== 'playing' || this.paused || this.chatOpen || this.controlsOpen) {
       if (this.currentMode === 'car') this.ui.setCrosshair(false);
@@ -2327,44 +2812,60 @@ export class NightfallGame {
     if (!p || !p.alive) return;
     if (p.reloading > 0) return;
     if (p.ammo <= 0) {
-      this.audio._noiseBurst?.(0.03, 2000, 0.01);
+      if (p.fireCooldown > 0) return;
+      p.fireCooldown = DRY_FIRE_INTERVAL;
+      this.audio.dryFire?.();
       this.startReload();
       return;
     }
     p.ammo -= 1;
-    p.fireCooldown = 0.115;
+    p.fireCooldown = FIRE_INTERVAL;
     p.lastShotAt = elapsed;
     p.reloading = 0;
     this.ui.setAmmo(p.ammo, p.reserve, 0);
-    this.cameraShake = Math.min(0.32, this.cameraShake + 0.075);
-    this.cameraPitch = clamp(this.cameraPitch + 0.0035, -1.02, 0.68);
+    this.cameraShake = Math.min(0.3, this.cameraShake + 0.055);
+    const headroom = Math.max(0, RECOIL_MAX - this.recoilOffset);
+    const kick = Math.min(0.0024, headroom);
+    this.cameraPitch = clamp(this.cameraPitch + kick, -1.02, 0.68);
+    this.recoilOffset += kick;
+    this.recoilSettle = 0.16;
     this.audio.gunshot(true);
     if (this.localChar) this.localChar.flashTime = 0.06;
 
     const origin = this.camera.position.clone();
     const direction = this.camera.getWorldDirection(new THREE.Vector3());
-    const end = origin.clone().addScaledVector(direction, 150);
+    // ADS tightens the cone; hip fire keeps a small, readable spread.
+    const spread = this.aiming ? 0.0016 : 0.0065;
+    if (spread > 0) {
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
+      direction
+        .addScaledVector(right, (Math.random() - 0.5) * spread * 2)
+        .addScaledVector(up, (Math.random() - 0.5) * spread * 2)
+        .normalize();
+    }
     const target = this.pickShootTarget(origin, direction, 150);
+    const impactPoint = target?.point || origin.clone().addScaledVector(direction, 150);
 
-    let impactPoint = end;
-    if (target) {
-      impactPoint = target.point.clone();
-      if (target.enemy) {
-        if (this.isHost) this.applyEnemyDamage(target.enemy, this.weaponDamage, this.myName);
-        else {
-          this.network?.send('shot', {
-            enemyId: target.enemy.id,
-            ox: origin.x, oy: origin.y, oz: origin.z,
-            ex: impactPoint.x, ey: impactPoint.y, ez: impactPoint.z,
-          });
-        }
-        this.ui.hitmarker();
-        this.audio.hitmarker();
+    if (target?.enemy) {
+      if (this.isHost) this.applyEnemyDamage(target.enemy, this.weaponDamage, this.myName);
+      else {
+        this.network?.send('shot', {
+          enemyId: target.enemy.id,
+          ox: origin.x, oy: origin.y, oz: origin.z,
+          ex: impactPoint.x, ey: impactPoint.y, ez: impactPoint.z,
+        });
         this.effects.enemyHit(impactPoint, 0xff6a55);
-        p.scoreFlash = 0.2;
-      } else {
-        this.effects.bulletImpact(impactPoint, new THREE.Vector3(0, 1, 0), 0x9feaff);
       }
+      this.ui.hitmarker();
+      this.audio.hitmarker();
+      p.scoreFlash = 0.2;
+    } else {
+      this.effects.bulletImpact(
+        impactPoint,
+        target?.normal || new THREE.Vector3(0, 1, 0),
+        0x9feaff,
+      );
     }
     const muzzle = new THREE.Vector3(
       p.pos.x + Math.sin(p.bodyYaw) * 0.55 + Math.cos(p.bodyYaw) * 0.24,
@@ -2377,9 +2878,10 @@ export class NightfallGame {
   }
 
   pickShootTarget(origin, direction, maxDistance) {
-    const candidates = this.isHost ? this.localEnemies : [...this.remoteEnemies.values()];
     let best = null;
-    let bestT = maxDistance;
+    let bestDistance = maxDistance;
+
+    const candidates = this.isHost ? this.localEnemies : [...this.remoteEnemies.values()];
     for (const enemy of candidates) {
       if (!enemy.alive) continue;
       const baseY = enemy.y ?? enemy.pos?.y ?? 0;
@@ -2390,22 +2892,45 @@ export class NightfallGame {
       );
       const toEnemy = center.clone().sub(origin);
       const t = toEnemy.dot(direction);
-      if (t < 0.5 || t > bestT) continue;
+      if (t < 0.5 || t > bestDistance) continue;
       const closest = origin.clone().addScaledVector(direction, t);
       const radius = enemy.type === 'drone' ? 1.15 : 0.9;
       if (closest.distanceTo(center) > radius) continue;
       if (this.isShotBlocked(origin, center)) continue;
-      bestT = t;
+      bestDistance = t;
       best = { enemy, point: closest, distance: t };
     }
-    if (best) return best;
-    // Ground / facade impact
-    const groundT = direction.y < -0.02 ? -origin.y / direction.y : Infinity;
-    if (groundT > 0 && groundT < maxDistance) {
-      return { point: origin.clone().addScaledVector(direction, groundT), distance: groundT };
+
+    // Walls now produce a real spark hit instead of a tracer through the facade.
+    const end = origin.clone().addScaledVector(direction, maxDistance);
+    for (const box of this.world.colliders) {
+      const fraction = segmentBoxHit(origin, end, box, 0);
+      if (fraction === null || fraction <= 0.002 || fraction * maxDistance >= bestDistance) continue;
+      const point = origin.clone().addScaledVector(direction, fraction * maxDistance);
+      const normal = new THREE.Vector3();
+      const eps = 0.7;
+      if (point.x <= box.minX + eps) normal.x = -1;
+      else if (point.x >= box.maxX - eps) normal.x = 1;
+      if (point.z <= box.minZ + eps) normal.z = -1;
+      else if (point.z >= box.maxZ - eps) normal.z = 1;
+      if (normal.lengthSq() < 0.01) normal.set(0, 1, 0);
+      bestDistance = fraction * maxDistance;
+      best = { point, distance: bestDistance, normal };
     }
-    const point = origin.clone().addScaledVector(direction, Math.min(maxDistance, 90));
-    return { point, distance: Math.min(maxDistance, 90) };
+
+    const groundT = direction.y < -0.02 ? -origin.y / direction.y : Infinity;
+    if (groundT > 0 && groundT < bestDistance) {
+      best = {
+        point: origin.clone().addScaledVector(direction, groundT),
+        distance: groundT,
+        normal: new THREE.Vector3(0, 1, 0),
+      };
+    }
+    return best || {
+      point: origin.clone().addScaledVector(direction, Math.min(maxDistance, 90)),
+      distance: Math.min(maxDistance, 90),
+      normal: direction.clone().negate(),
+    };
   }
 
   isShotBlocked(origin, target) {
@@ -2754,6 +3279,7 @@ export class NightfallGame {
     this.audio.explosion();
     this.scene.remove(enemy.group);
     this.scene.remove(enemy.shadow);
+    this.addReserve(6, false);
     if (this.mission) {
       this.mission.score += 250;
       if ((this.mission.mode === 'purge' || this.mission.mode === 'hunt')
@@ -2790,7 +3316,7 @@ export class NightfallGame {
     const adjusted = amount * vehicleFactor;
     p.health = Math.max(0, p.health - adjusted);
     p.lastDamageAt = this.elapsed;
-    this.ui.setVitals(p.health, p.stamina);
+    this.ui.setVitals(p.health, p.stamina, this.maxHealth, this.maxStamina);
     this.ui.damage();
     this.audio.damage();
     this.cameraShake = Math.min(1.2, this.cameraShake + 0.32);
@@ -2811,7 +3337,7 @@ export class NightfallGame {
     this.ui.showDeath(4);
     this.ui.setCrosshair(false);
     this.ui.setInteraction('', false);
-    this.ui.setVitals(0, p.stamina);
+    this.ui.setVitals(0, p.stamina, this.maxHealth, this.maxStamina);
     this.ui.feed('Signal lost. Re-syncing neural link…', 'warn', 'SECURITY');
     if (this.localChar) this.localChar.group.visible = true;
     this.sendPlayerState(true);
@@ -2838,8 +3364,8 @@ export class NightfallGame {
     this.localCar = null;
     this.ui.hideDeath();
     this.ui.setMode('foot');
-    this.ui.setVitals(100, 100);
-    this.ui.setAmmo(MAG_SIZE, MAX_RESERVE, 0);
+    this.ui.setVitals(this.maxHealth, this.maxStamina, this.maxHealth, this.maxStamina);
+    this.ui.setAmmo(this.magSize, this.reserveMax, 0);
     this.ui.setCrosshair(true);
     this.status = this.mission?.phase === 'complete' ? 'result' : 'playing';
     if (this.localChar) this.localChar.group.visible = true;
@@ -2946,6 +3472,8 @@ export class NightfallGame {
     const incoming = msg.mission;
     const previousContract = this.mission?.contract;
     const previousPhase = this.mission?.phase;
+    const previousActivityId = this.activity?.id;
+    const previousActivityPhase = this.activity?.phase;
     this.mission = {
       ...incoming,
       shards: (incoming.shards || []).map((s) => ({ ...s })),
@@ -2963,10 +3491,50 @@ export class NightfallGame {
     this.world.extractionGroup.position.set(this.mission.extraction.x, 0.16, this.mission.extraction.z);
     this.syncRemoteEnemies(msg.enemies);
     this.alertCount = msg.alert ?? this.remoteAlertCount ?? 0;
+
+    // Activities are host-owned but mirrored into the guest HUD and map.
+    if (msg.activity) {
+      const raw = msg.activity;
+      this.activity = {
+        ...raw,
+        checkpoints: (raw.checkpoints || []).map((point) => ({ ...point })),
+      };
+      if (raw.id !== previousActivityId) {
+        this.rebuildRaceVisuals();
+        this.ui.showMissionBanner(
+          this.activity.label || 'RANDOM ACTIVITY',
+          'HIT EVERY GATE IN ORDER',
+          'HOST ACTIVITY',
+          4200,
+        );
+        this.ui.feed(`Host launched a ${this.activity.label || 'race'}.`, 'info', 'ACTIVITY');
+      } else if (this.activity.phase === 'finished' && previousActivityPhase !== 'finished') {
+        const winner = this.activity.winnerName || 'ALLY';
+        this.ui.showMissionBanner(this.activity.label, `${winner.toUpperCase()} TOOK THE FLAG`, 'RACE COMPLETE', 4200);
+        if (this.activity.winnerId === (this.session?.selfId || 'solo')) {
+          this.awardActivityCredit(this.activity);
+        }
+      } else if (this.activity.phase === 'failed' && previousActivityPhase !== 'failed') {
+        this.ui.showMissionBanner(this.activity.label, 'RACE CLOSED', 'ACTIVITY FAILED', 3600);
+      }
+    } else if (previousActivityId) {
+      this.activity = null;
+      this.clearRaceVisuals();
+    }
+
     const phase = this.mission.phase;
     const contractName = this.mission.contractName || 'GHOST PROTOCOL';
 
     if (phase === 'complete' && !this.completed) {
+      // Guests used to see the result but never bank the host-awarded credits.
+      const resultId = this.mission.resultId || `${contractName}-${this.mission.contract}`;
+      const earned = this.mission.creditsEarned || 0;
+      if (earned > 0 && !this.creditedContracts.has(resultId)) {
+        this.creditedContracts.add(resultId);
+        this.credits += earned;
+        writeStorage(CREDITS_KEY, String(Math.floor(this.credits)));
+        this.updateUpgradeUI();
+      }
       this.completed = true;
       this.status = 'result';
       this.ignoreUnlock = true;
@@ -2983,7 +3551,7 @@ export class NightfallGame {
         countdown: this.mission.completeIn ?? 12,
         caches: this.mission.shards?.length || 3,
         contractName,
-        credits: this.mission.creditsEarned || 0,
+        credits: earned,
       });
       if (document.pointerLockElement) document.exitPointerLock();
     } else if (phase !== 'complete' && this.completed) {
@@ -2998,6 +3566,7 @@ export class NightfallGame {
     }
 
     if (previousContract !== undefined && previousContract !== this.mission.contract) {
+      this.resupply(false);
       this.ui.showMissionBanner(
         contractName,
         this.mission.contractTag || 'SECURE THE DATA CACHES',
@@ -3067,7 +3636,24 @@ export class NightfallGame {
         requireVehicle: !!this.mission.requireVehicle,
         lastSplit: this.mission.lastSplit || 0,
         creditsEarned: this.mission.creditsEarned || 0,
+        resultId: this.mission.resultId || null,
       },
+      activity: this.activity ? {
+        id: this.activity.id,
+        kind: this.activity.kind,
+        label: this.activity.label,
+        phase: this.activity.phase,
+        checkpoints: this.activity.checkpoints.map((point) => ({ ...point })),
+        next: this.activity.next,
+        elapsed: this.activity.elapsed,
+        timeLimit: this.activity.timeLimit,
+        timeRemaining: this.activity.timeRemaining,
+        reward: this.activity.reward,
+        racerId: this.activity.racerId,
+        winnerId: this.activity.winnerId,
+        winnerName: this.activity.winnerName,
+        finishIn: this.activity.finishIn,
+      } : null,
       weather: this.world?.weather?.kind || 'rain',
       enemies: this.localEnemies.filter((e) => e.alive).map((e) => ({
         id: e.id,
@@ -3219,7 +3805,7 @@ export class NightfallGame {
         if (!this.isHost) this.handleState(msg);
         break;
       case 'weather':
-        if (!this.isHost && msg.weather) this.applyWeather(msg.weather, true);
+        if (!this.isHost && msg.from === this.session.hostId && msg.weather) this.applyWeather(msg.weather, true);
         break;
       case 'weather-request':
         if (this.isHost && msg.weather) {
@@ -3234,19 +3820,27 @@ export class NightfallGame {
         if (this.isHost) this.handleShardRequest(msg);
         break;
       case 'shard-collected':
-        if (!this.isHost) this.handleRemoteShardCollected(msg);
+        if (!this.isHost && msg.from === this.session.hostId) this.handleRemoteShardCollected(msg);
+        break;
+      case 'activity-request':
+        if (this.isHost) this.handleActivityRequest(msg);
+        break;
+      case 'activity-enter':
+        if (!this.isHost && msg.from === this.session.hostId) this.handleActivityEnter(msg);
         break;
       case 'shot':
         if (this.isHost) this.handleRemoteShot(msg);
         break;
       case 'enemy-shot':
-        if (!this.isHost) this.handleEnemyShot(msg);
+        if (!this.isHost && msg.from === this.session.hostId) this.handleEnemyShot(msg);
         break;
       case 'enemy-dead':
-        if (!this.isHost) this.handleEnemyDead(msg);
+        if (!this.isHost && msg.from === this.session.hostId) this.handleEnemyDead(msg);
         break;
       case 'hit':
-        if (msg.target === this.session.selfId) this.damagePlayer(msg.amount || 5, msg.source);
+        if (msg.from === this.session.hostId && msg.target === this.session.selfId) {
+          this.damagePlayer(clamp(Number(msg.amount) || 5, 0, 20), msg.source);
+        }
         break;
       case 'chat': {
         const text = String(msg.text || '').replace(/[<>]/g, '').trim().slice(0, 120);
@@ -3275,22 +3869,28 @@ export class NightfallGame {
     const remote = this.remotePlayers.get(msg.from);
     if (!remote || !remote.alive) return;
     const shard = this.mission.shards.find((s) => s.id === msg.shardId);
-    if (!shard || shard.collected) return;
-    if (dist2D(remote.pos.x, remote.pos.z, shard.x, shard.z) > 7) return;
+    const error = this.shardCollectionError(shard, {
+      pos: remote.pos,
+      inCar: !!remote.inCar,
+      name: remote.name,
+    });
+    if (error !== null) return;
+    let split = 0;
+    if (this.mission.mode === 'circuit') {
+      split = Math.max(0, this.mission.elapsed - (this.mission.lastSplit || 0));
+      this.mission.lastSplit = this.mission.elapsed;
+    }
     this.applyShardCollected(shard, remote.name, true);
-    this.mission.score += 500;
+    this.mission.breached += 1;
+    this.mission.score += this.mission.requireVehicle ? 700 : 500;
     this.network?.send('shard-collected', {
       shardId: shard.id,
       by: remote.id,
       name: remote.name,
+      split,
       all: this.mission.shards.every((s) => s.collected),
     });
-    if (this.mission.shards.every((s) => s.collected)) {
-      this.mission.phase = 'extract';
-      this.world.extractionGroup.visible = true;
-      this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL CACHES SECURED', 5200);
-      this.ui.feed('All caches secured. Extraction gate is live at the plaza.', 'ok', 'EXTRACT');
-    }
+    this.onAllCachesSecured();
     this.sendFullState(true);
   }
 
@@ -3343,6 +3943,7 @@ export class NightfallGame {
       this.scene.remove(enemy.group);
       this.scene.remove(enemy.shadow);
       this.remoteEnemies.delete(msg.id);
+      this.addReserve(6, false);
     }
   }
 
@@ -3455,8 +4056,10 @@ export class NightfallGame {
     // them removes a surprising amount of DOM and canvas work per frame.
     if (this.hudTick < 0.045) return;
     this.hudTick = 0;
-    this.ui.setVitals(this.player.health, this.player.stamina);
-    if (this.currentMode === 'foot') this.ui.setAmmo(this.player.ammo, this.player.reserve, this.player.reloading > 0 ? 1 - this.player.reloading / 1.35 : 0);
+    this.ui.setVitals(this.player.health, this.player.stamina, this.maxHealth, this.maxStamina);
+    if (this.currentMode === 'foot') this.ui.setAmmo(this.player.ammo, this.player.reserve, this.player.reloading > 0 ? 1 - this.player.reloading / RELOAD_SECONDS : 0);
+    if (this.activity) this.ui.setActivity(this.activity, this.activityDistance());
+    else this.ui.setActivity(null);
 
     const width = this.renderer.domElement.clientWidth || window.innerWidth;
     const height = this.renderer.domElement.clientHeight || window.innerHeight;
@@ -3509,6 +4112,27 @@ export class NightfallGame {
         });
       }
     }
+    if (!this.activity?.phase || this.activity.phase === 'finished' || this.activity.phase === 'failed') {
+      for (const station of ACTIVITY_STATIONS) {
+        markers.push({
+          id: `activity-${station.kind}`,
+          position: new THREE.Vector3(station.x, 3.2, station.z),
+          label: `PRESS G — ${station.label}`,
+          className: 'world-marker--race',
+        });
+      }
+    }
+    if (this.activity?.phase === 'running') {
+      const gate = this.activity.checkpoints?.[this.activity.next];
+      if (gate) {
+        markers.push({
+          id: 'activity-next-gate',
+          position: new THREE.Vector3(gate.x, 3.2, gate.z),
+          label: `GATE ${this.activity.next + 1}/${this.activity.checkpoints.length} — ${gate.name}`,
+          className: 'world-marker--race',
+        });
+      }
+    }
     this.ui.updateLabels(this.camera, width, height, markers, dt);
 
     const enemies = this.isHost
@@ -3527,6 +4151,8 @@ export class NightfallGame {
       enemies.map((e) => ({ x: e.x, z: e.z })),
       this.pings,
       performance.now(),
+      this.activity,
+      ACTIVITY_STATIONS,
     );
 
     if (performance.now() - this.lastFpsUpdate > 700) {
@@ -3545,9 +4171,12 @@ export class NightfallGame {
     if (!this.mission || !this.player) return Infinity;
     if (this.mission.phase === 'collect') {
       let best = Infinity;
+      const ordered = this.mission.mode === 'sequence'
+        || this.mission.mode === 'circuit'
+        || this.mission.mode === 'courier';
       for (const shard of this.mission.shards) {
         if (shard.collected) continue;
-        if (this.mission.mode === 'sequence' && shard.order !== this.mission.breached) continue;
+        if (ordered && shard.order !== this.mission.breached) continue;
         best = Math.min(best, dist2D(this.player.pos.x, this.player.pos.z, shard.x, shard.z));
       }
       return best;
@@ -3556,6 +4185,13 @@ export class NightfallGame {
       return dist2D(this.player.pos.x, this.player.pos.z, this.mission.extraction.x, this.mission.extraction.z);
     }
     return 0;
+  }
+
+  activityDistance() {
+    if (!this.activity || !this.player) return Infinity;
+    const gate = this.activity.checkpoints?.[this.activity.next];
+    if (!gate) return 0;
+    return dist2D(this.player.pos.x, this.player.pos.z, gate.x, gate.z);
   }
 
   positionMenuCamera(dt) {
@@ -3659,6 +4295,7 @@ export class NightfallGame {
     if (this.isHost) this.updateEnemies(dt, elapsed);
     else this.updateRemoteEnemies(dt, elapsed);
     this.updateMission(dt, elapsed);
+    this.updateActivity(dt);
     this.updateCars(dt);
     this.updateShardVisuals(dt, elapsed);
     this.updatePings();

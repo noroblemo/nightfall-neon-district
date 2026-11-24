@@ -1070,6 +1070,28 @@ kbd {
   color: var(--amber);
 }
 
+.mission-card.is-secondary {
+  opacity: 0.62;
+  transform: scale(0.9);
+  transform-origin: top left;
+  margin-bottom: -16px;
+}
+
+.activity-card {
+  margin-top: 8px;
+  border-left-color: var(--pink);
+  background: linear-gradient(120deg, rgba(18, 6, 18, 0.88), rgba(8, 12, 22, 0.58));
+}
+
+.activity-card .mission-card__head { color: var(--pink); }
+.activity-card h2 { color: #ffd3e8; font-size: 23px; }
+.activity-card .mission-dots span.done {
+  background: #6bffb8;
+  box-shadow: 0 0 9px rgba(107, 255, 184, 0.65);
+}
+.activity-card .mission-dots span.next { background: rgba(255, 209, 102, 0.45); }
+.activity-card .mission-distance { color: #ffd166; }
+
 .hud__top-center {
   position: absolute;
   top: 24px;
@@ -1388,6 +1410,20 @@ kbd {
 }
 
 .world-marker--extract .world-marker__label { color: #ffdda7; }
+
+.world-marker--race .world-marker__icon {
+  border-radius: 50%;
+  border-color: var(--pink);
+  background: rgba(255, 45, 149, 0.12);
+  box-shadow: 0 0 16px rgba(255, 45, 149, 0.35);
+}
+
+.world-marker--race .world-marker__icon::after {
+  background: var(--pink);
+  box-shadow: 0 0 8px var(--pink);
+}
+
+.world-marker--race .world-marker__label { color: #ffb3d6; }
 
 .remote-label {
   position: absolute;

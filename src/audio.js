@@ -629,6 +629,12 @@ export class AudioEngine {
     this._noiseBurst(0.1, 180, 0.04);
   }
 
+  dryFire() {
+    if (!this.started) return;
+    this._noiseBurst(0.025, 2800, 0.012);
+    this._tone(180, 0.03, 0.014, 'square', 120);
+  }
+
   gunshot(suppressed = true) {
     if (!this.started) return;
     const ctx = this.ctx;

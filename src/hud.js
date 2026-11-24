@@ -373,6 +373,50 @@ export class UI {
     }
   }
 
+  setActivity(state, distance) {
+    const card = $('activityCard');
+    if (!card) return;
+    const active = !!state;
+    card.classList.toggle('hidden', !active);
+    $('missionCard')?.classList.toggle('is-secondary', active);
+    if (!active) return;
+
+    const label = state.label || (state.kind === 'bike' ? 'BIKE RACE' : 'CAR RACE');
+    const total = state.checkpoints?.length || 0;
+    const next = Math.max(0, state.next || 0);
+    const finished = state.phase === 'finished';
+    const failed = state.phase === 'failed';
+    const nextPoint = state.checkpoints?.[next];
+    let eyebrow = 'RANDOM ACTIVITY';
+    let objective = `Gate ${Math.min(next + 1, total)}/${total} — ${nextPoint?.name || 'next gate'}.`;
+    if (finished) {
+      eyebrow = 'RACE COMPLETE';
+      objective = `${state.winnerName || 'ALLY'} took the flag — +${state.reward || 0} CR.`;
+    } else if (failed) {
+      eyebrow = 'RACE CLOSED';
+      objective = 'Time expired. Reach a race gate to try again.';
+    }
+    setText($('activityEyebrow'), eyebrow);
+    setText($('activityTitle'), label);
+    setText($('activityObjective'), objective);
+    setText($('activityDistance'), finished || failed ? '— M' : fmtDistance(distance));
+    setText($('activityTimer'), formatTime(state.timeRemaining ?? 0));
+
+    const dots = $('activityDots')?.children;
+    if (dots) {
+      if (dots.length !== total) {
+        const wrap = $('activityDots');
+        wrap.replaceChildren();
+        for (let i = 0; i < total; i += 1) wrap.appendChild(document.createElement('span'));
+      }
+      const liveDots = $('activityDots').children;
+      for (let i = 0; i < liveDots.length; i += 1) {
+        liveDots[i].classList.toggle('done', finished || i < next);
+        liveDots[i].classList.toggle('next', !finished && !failed && i === next);
+      }
+    }
+  }
+
   setWeather(label, tagline, id) {
     const el = $('weatherTag');
     if (!el) return;
@@ -390,9 +434,9 @@ export class UI {
     }
   }
 
-  setVitals(health, stamina) {
-    const h = clamp(health, 0, 100);
-    const s = clamp(stamina, 0, 100);
+  setVitals(health, stamina, maxHealth = 100, maxStamina = 100) {
+    const h = clamp(maxHealth > 0 ? (health / maxHealth) * 100 : 0, 0, 100);
+    const s = clamp(maxStamina > 0 ? (stamina / maxStamina) * 100 : 0, 0, 100);
     const bar = $('healthBar');
     if (bar) {
       bar.style.width = `${h}%`;
@@ -403,8 +447,8 @@ export class UI {
       sb.style.width = `${s}%`;
       sb.classList.toggle('is-low', s < 20);
     }
-    setText($('healthText'), String(Math.round(h)));
-    setText($('staminaText'), String(Math.round(s)));
+    setText($('healthText'), String(Math.round(health)));
+    setText($('staminaText'), String(Math.round(stamina)));
   }
 
   setMode(mode) {
@@ -658,7 +702,7 @@ export class UI {
     this.minimapCache = canvas;
   }
 
-  drawMinimap(world, player, remotes, mission, enemies, pings, now) {
+  drawMinimap(world, player, remotes, mission, enemies, pings, now, activity = null, stations = []) {
     if (!this.minimapCache) return;
     if (now - this.minimapTime < 45) return;
     this.minimapTime = now;
@@ -673,6 +717,7 @@ export class UI {
     const toX = (x) => cx + x * scale;
     const toY = (z) => cy + z * scale;
     const pulse = (Math.sin(now / 280) + 1) / 2;
+    const toCssHex = (value) => `#${(value ?? 0xff2d95).toString(16).padStart(6, '0')}`;
 
     // Shards
     if (mission?.shards) {
@@ -708,6 +753,69 @@ export class UI {
       ctx.beginPath();
       ctx.arc(x, y, 5, 0, TAU);
       ctx.fill();
+      ctx.restore();
+    }
+
+    // Random-activity gates stay visible from the moment you spawn.
+    if (stations?.length) {
+      for (const station of stations) {
+        const x = toX(station.x);
+        const y = toY(station.z);
+        const color = toCssHex(station.color);
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.82;
+        ctx.beginPath();
+        ctx.arc(x, y, 6 + pulse * 2, 0, TAU);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x, y, 2.5, 0, TAU);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // Live race route: completed gates dim, the next gate pulses amber.
+    if (activity?.checkpoints?.length) {
+      const points = activity.checkpoints;
+      const color = activity.kind === 'bike' ? '#ff2d95' : '#20e6ff';
+      const nextIndex = activity.next || 0;
+      ctx.save();
+      ctx.globalAlpha = 0.72;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([7, 7]);
+      ctx.beginPath();
+      ctx.moveTo(toX(points[0].x), toY(points[0].z));
+      for (let i = 1; i < points.length; i += 1) ctx.lineTo(toX(points[i].x), toY(points[i].z));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      for (let i = 0; i < points.length; i += 1) {
+        const point = points[i];
+        const done = activity.phase === 'finished' || i < nextIndex;
+        const next = activity.phase === 'running' && i === nextIndex;
+        ctx.beginPath();
+        ctx.arc(toX(point.x), toY(point.z), next ? 7 + pulse * 3 : 5, 0, TAU);
+        ctx.fillStyle = done ? 'rgba(107, 255, 184, 0.9)' : next ? '#ffd166' : 'rgba(150, 170, 190, 0.55)';
+        ctx.fill();
+        if (next) {
+          ctx.strokeStyle = '#ffd166';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+      const nextPoint = points[nextIndex];
+      if (activity.phase === 'running' && nextPoint) {
+        ctx.strokeStyle = 'rgba(255, 209, 102, 0.55)';
+        ctx.setLineDash([4, 6]);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(toX(player.x), toY(player.z));
+        ctx.lineTo(toX(nextPoint.x), toY(nextPoint.z));
+        ctx.stroke();
+      }
       ctx.restore();
     }
 

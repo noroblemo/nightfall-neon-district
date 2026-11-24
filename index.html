@@ -113,7 +113,7 @@
         <aside class="side-panel">
           <div class="side-panel__eyebrow">DISTRICT BRIEF // 01</div>
           <h2>THE GHOST<br />PROTOCOL</h2>
-          <p>Six escalating contracts. Rotating caches. One extraction gate. Every drone in the district is looking for you.</p>
+          <p>Nine escalating contracts. Random bike and car races by the plaza. One extraction gate. Every drone in the district is looking for you.</p>
           <ul class="brief-list">
             <li><span>01</span> Breach the caches hidden across the neon grid.</li>
             <li><span>02</span> Use the swarm response to your advantage — split up.</li>
@@ -148,7 +148,7 @@
           <button id="weatherTag" class="district-tag__weather" data-weather="rain" type="button" title="Change weather (V)">RAIN</button>
           <span id="hudClock" class="district-tag__clock">23:47</span>
         </div>
-        <div class="mission-card">
+        <div id="missionCard" class="mission-card">
           <div class="mission-card__head">
             <span id="missionEyebrow">ACTIVE CONTRACT</span>
             <span id="missionTimer">00:00</span>
@@ -160,6 +160,18 @@
             <span id="missionDistance" class="mission-distance">— M</span>
           </div>
           <div class="mission-score"><span>CONTRACT SCORE</span><strong id="scoreValue">0</strong></div>
+        </div>
+        <div id="activityCard" class="mission-card activity-card hidden">
+          <div class="mission-card__head">
+            <span id="activityEyebrow">RANDOM ACTIVITY</span>
+            <span id="activityTimer">00:00</span>
+          </div>
+          <h2 id="activityTitle">BIKE RACE</h2>
+          <p id="activityObjective">Gate 1/6 — START LIGHTS.</p>
+          <div class="mission-progress">
+            <div id="activityDots" class="mission-dots"></div>
+            <span id="activityDistance" class="mission-distance">— M</span>
+          </div>
         </div>
       </div>
 
@@ -339,7 +351,7 @@
         <div class="pause-panel__controls">
           <span><kbd>WASD</kbd> MOVE</span><span><kbd>MOUSE</kbd> LOOK</span><span><kbd>LMB</kbd> FIRE</span>
           <span><kbd>RMB</kbd> AIM</span><span><kbd>F</kbd> VEHICLE</span><span><kbd>E</kbd> INTERACT</span>
-          <span><kbd>SPACE</kbd> JUMP / BRAKE</span><span><kbd>Q</kbd> PING</span><span><kbd>V</kbd> WEATHER</span><span><kbd>T</kbd> CHAT</span>
+          <span><kbd>SPACE</kbd> JUMP / BRAKE</span><span><kbd>Q</kbd> PING</span><span><kbd>G</kbd> START RACE</span><span><kbd>V</kbd> WEATHER</span><span><kbd>T</kbd> CHAT</span>
         </div>
         <button id="leaveBtn" class="text-btn" type="button">LEAVE DISTRICT</button>
       </div>
@@ -387,6 +399,7 @@
             <p><kbd>RMB</kbd><span>Aim down sights</span></p>
             <p><kbd>R</kbd><span>Reload</span></p>
             <p><kbd>E / F</kbd><span>Interact / enter car</span></p>
+            <p><kbd>G</kbd><span>Start a race at a plaza gate</span></p>
             <p><kbd>Q</kbd><span>Ping location</span></p>
             <p><kbd>V</kbd><span>Cycle weather</span></p>
             <p><kbd>T</kbd><span>Chat</span></p>

@@ -12,9 +12,10 @@ A browser-based co-op open-world action game with Forza-style arcade driving, bu
 - **Switchable weather** — rain, clear skies, dense fog, electric storms and snow, with smooth transitions and a distinct soundscape for each: rain patter, city air, foghorns, lightning-triggered thunder and icy wind. Press `V` in-game or use the **WEATHER** toggle in the pause menu (the host picks for the room).
 - **Adaptive audio** — an original synthwave score during contracts, plus positional foley for weapons, footsteps, vehicles and pickups. `M` or the pause-menu button mutes everything.
 - **Contract ladder** — nine escalating contracts, from GHOST PROTOCOL through timed circuits, courier runs and bounties to LAST SIGNAL. Clear one and the next begins automatically.
+- **Random races** — BIKE RACE and CAR RACE gates sit beside the parked vehicles at the plaza. Press `G` at a gate (or request one as a guest) to launch a timed checkpoint sprint along one of two randomly chosen road-grid routes. Credits and ammo are awarded on a win; races never alter the nine-contract ladder.
 - **Driving** — arcade supercar physics and Tron-style light cycles with boost, handbrake drifts, tire trails, chase cameras and engine audio. Oriented car/bike hulls stop vehicles and pedestrians from cutting through parked or moving traffic.
 - **Operator progression** — choose a male or female Blender-rigged operator on the landing screen or in Options, then spend credits earned from contracts on Vitality, Endurance, Firepower and Overdrive upgrades. Selections and upgrades persist locally and sync to co-op partners.
-- **Combat** — third-person over-shoulder shooting with tracers, hitmarkers, reloads, guards and scout drones with detection/leash AI.
+- **Combat** — third-person over-shoulder shooting with tracers, hitmarkers, controlled recoil, tighter ADS accuracy, wall impacts and faster reloads. Larger magazines and recoverable reserves come from kills, caches, race gates and mission resets. Guards and scout drones use detection/leash AI.
 - **Online multiplayer** — room codes, up to 4 operatives per room on the WebSocket relay (2 on P2P fallback). Host-authoritative mission/enemy simulation with client prediction for movement.
 - **Performance** — instanced traffic and static geometry merges, partial effect-buffer uploads, dynamic resolution scaling with hysteresis, quality presets and ACES tone mapping; targets 60 FPS on laptops.
 
@@ -122,6 +123,7 @@ Any Node host works:
 | `Mouse` | Aim; `LMB` fire |
 | `F` | Enter / exit vehicle |
 | `E` | Interact — breach data cache |
+| `G` | Start a random bike/car race while standing at a plaza gate |
 | `R` | Reload (foot) / flip car (driving) |
 | `Q` | Map ping for your partner |
 | `V` | Cycle weather (or use the pause-menu weather toggle) |
@@ -131,7 +133,7 @@ Any Node host works:
 ## Multiplayer architecture
 
 - `server.js` — static file host + WebSocket relay (`/ws`). Relays gameplay messages inside rooms; no game simulation server-side. `/api/health` for status.
-- Host client owns the mission: the contract ladder, shards, enemies, extraction and weather. Guests send intents (`shard-request`, `shot`, `weather-request`, `chat`, `map-ping`, `player-state`); the host validates (range + line-of-sight anti-cheat) and broadcasts authoritative state at ~11 Hz.
+- Host client owns the mission and optional races: the contract ladder, shards, enemies, extraction, weather and race timers/routes. Guests send intents (`shard-request`, `activity-request`, `shot`, `weather-request`, `chat`, `map-ping`, `player-state`); the host validates (range + line-of-sight anti-cheat) and broadcasts authoritative state at ~11 Hz.
 - If the relay is unreachable, `src/network.js` falls back to PeerJS WebRTC mesh (2 players).
 
 ## Project layout
