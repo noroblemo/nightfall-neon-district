@@ -95,6 +95,9 @@ export class Network {
     const id = msg.id;
     const color = normalizePlayerColor(msg.color, null);
     if (!id || color === null) return;
+    // A guest only accepts the host announcing the host's own suit. The host
+    // never consumes peer-color; it is the colour authority in P2P rooms.
+    if (this.mode === 'p2p' && !this.isHost && id !== this.hostId) return;
     const player = this.players.get(id);
     if (player) player.color = color;
     if (this.p2pHostInfo && id === this.selfId) this.p2pHostInfo.color = color;
@@ -288,7 +291,11 @@ export class Network {
             config: { iceServers: ICE_SERVERS },
           });
         } catch (err) {
-          reject(new Error('WebRTC is unavailable in this browser.'));
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            reject(new Error('WebRTC is unavailable in this browser.'));
+          }
           return null;
         }
       };
@@ -348,6 +355,8 @@ export class Network {
       } else {
         const code = sanitizeRoom(room);
         if (!ROOM_ALPHABET.test(code)) {
+          clearTimeout(timer);
+          settled = true;
           reject(new Error('That room code is not valid.'));
           return;
         }
@@ -458,6 +467,12 @@ export class Network {
 
   _receiveP2P(data, from) {
     if (!data || typeof data !== 'object') return;
+    // Peer links are two-way pipes, so message direction is part of the
+    // authority model: only the host can welcome, assign colours or publish
+    // its own colour; only the guest can request one.
+    if (this.isHost && ['welcome', 'color-assigned', 'peer-color'].includes(data.type)) return;
+    if (!this.isHost && ['hello', 'color-request'].includes(data.type)) return;
+    if (data.type === 'welcome' && from !== this.hostId) return;
     if (data.type === 'welcome') {
       this.selfId = data.selfId;
       this.roomCode = data.roomCode;

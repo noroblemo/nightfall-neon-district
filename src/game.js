@@ -263,6 +263,27 @@ function normalizeVariant(value) {
   return value === 'female' ? 'female' : 'male';
 }
 
+// Names and suit colours are room identity, not per-message data. Anything
+// arriving on a gameplay packet is untrusted, even though it came through the
+// relay, so fall back to the authority-owned roster entry.
+function safeRemoteName(value, fallback = 'ALLY') {
+  const name = String(value || '')
+    .replace(/[<>\r\n\t]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 16);
+  return name || fallback;
+}
+
+function messageIdentity(game, from, name, color) {
+  const known = game.network?.getPlayer?.(from);
+  const remote = game.remotePlayers.get(from);
+  return {
+    name: safeRemoteName(known?.name || remote?.name || name),
+    color: known?.color ?? remote?.color ?? normalizePlayerColor(color, 0xff2d95),
+  };
+}
+
 function readUpgrades() {
   let stored = {};
   try {
@@ -385,6 +406,7 @@ export class NightfallGame {
     this.localEnemies = [];
     this.remoteEnemies = new Map();
     this.remotePlayers = new Map();
+    this.remoteShotTimes = new Map();
     this.pings = [];
     this.shadowTex = buildShadowTexture();
     this.elapsed = 0;
@@ -468,21 +490,9 @@ export class NightfallGame {
     click('joinBtn', () => this.startOnline('join'));
     click('soloBtn', () => this.startSolo());
 
-    click('resumeBtn', () => {
-      this.paused = false;
-      this.ui.setPaused(false);
-      this.requestPointerLock();
-    });
-    click('howToBtn', () => {
-      this.controlsOpen = true;
-      this.ui.setControls(true);
-      if (document.pointerLockElement) document.exitPointerLock();
-    });
-    click('closeControlsBtn', () => {
-      this.controlsOpen = false;
-      this.ui.setControls(false);
-      if (this.status === 'playing' || this.status === 'paused') this.requestPointerLock();
-    });
+    click('resumeBtn', () => this.setPaused(false));
+    click('howToBtn', () => this.setControlsOpen(true));
+    click('closeControlsBtn', () => this.setControlsOpen(false));
     click('copyInviteBtn', () => this.copyInvite());
     click('leaveBtn', () => this.leaveGame());
     click('reloadBtn', () => window.location.reload());
@@ -967,8 +977,10 @@ export class NightfallGame {
     this.remotePlayers.clear();
     this.remoteEnemies.clear();
     this.localEnemies = [];
+    this.remoteShotTimes.clear();
     this.pings = [];
     this.elapsed = 0;
+    this.missionCount = 0;
 
     this.createLocalCharacter(this.myColor);
     this.initCars();
@@ -1219,22 +1231,23 @@ export class NightfallGame {
   onKeyDown(event) {
     const active = document.activeElement;
     if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-    if (this.status === 'menu' || this.status === 'disconnected') return;
 
+    // Escape is handled before every gameplay gate so the Controls modal can
+    // always be closed, including from the landing menu.
     if (event.code === 'Escape') {
       if (this.controlsOpen) {
-        this.controlsOpen = false;
-        this.ui.setControls(false);
-        if (this.status === 'paused') {
-          this.paused = false;
-          this.status = 'playing';
-          this.ui.setPaused(false);
-        }
+        this.setControlsOpen(false);
+      } else if (this.chatOpen) {
+        this.toggleChat(false);
+      } else if (this.status === 'playing' || this.status === 'dead') {
+        this.setPaused(true);
+      } else if (this.status === 'paused') {
+        this.setPaused(false);
       }
       return;
     }
-    if (this.status === 'result') return;
-    if (this.chatOpen) return;
+    if (this.status === 'menu' || this.status === 'disconnected' || this.status === 'result') return;
+    if (this.chatOpen || this.controlsOpen) return;
     if (this.status === 'paused') return;
 
     if (event.code === 'KeyT' && !event.repeat) {
@@ -1365,32 +1378,65 @@ export class NightfallGame {
     }
   }
 
-  setPaused(paused) {
-    if (this.status === 'disconnected' || this.status === 'result' || this.status === 'menu') return;
-    if (this.status === 'dead') return;
-    this.paused = paused;
-    this.status = paused ? 'paused' : 'playing';
-    this.ui.setPaused(paused);
-    this.audio.setMusicActive?.(!paused);
+  setControlsOpen(open) {
+    const next = !!open;
+    if (this.controlsOpen === next) return;
+    this.controlsOpen = next;
+    this.ui.setControls(next);
     this.keys.clear();
     this.mouseDown = false;
     this.aiming = false;
-    this.ui.setCrosshair(!paused);
-    if (paused) this.ui.setInteraction('', false);
-    if (paused && document.pointerLockElement) document.exitPointerLock();
+    if (next) {
+      if (document.pointerLockElement) document.exitPointerLock();
+    } else if (this.status === 'playing' || this.status === 'paused') {
+      this.requestPointerLock();
+    }
+  }
+
+  setPaused(paused) {
+    if (this.status === 'disconnected' || this.status === 'result' || this.status === 'menu') return;
+    if (this.status === 'dead') return;
+    const next = !!paused;
+    if (this.paused === next && this.status === (next ? 'paused' : 'playing')) {
+      if (!next) this.requestPointerLock();
+      return;
+    }
+    this.paused = next;
+    this.status = next ? 'paused' : 'playing';
+    this.ui.setPaused(next);
+    // One state transition owns the music: pause mutes it, resume restores it.
+    this.audio.setMusicActive?.(!next);
+    this.keys.clear();
+    this.mouseDown = false;
+    this.aiming = false;
+    this.ui.setCrosshair(!next);
+    if (next) {
+      this.ui.setInteraction('', false);
+      if (document.pointerLockElement) document.exitPointerLock();
+    } else {
+      this.requestPointerLock();
+    }
   }
 
   toggleChat(open) {
     if (!this.session) return;
-    if (open && this.status !== 'playing' && this.status !== 'dead' && this.status !== 'paused') return;
-    this.chatOpen = open;
-    this.ui.setChatOpen(open);
-    if (open) {
-      this.keys.clear();
-      this.mouseDown = false;
-      this.aiming = false;
-    } else if (document.pointerLockElement !== this.canvas) {
-      this.requestPointerLock();
+    const next = !!open;
+    if (next && this.status !== 'playing' && this.status !== 'dead' && this.status !== 'paused') return;
+    if (this.chatOpen === next) return;
+    this.chatOpen = next;
+    this.ui.setChatOpen(next);
+    this.keys.clear();
+    this.mouseDown = false;
+    this.aiming = false;
+    if (next) {
+      // Release the mouse before focusing the chat field; the unlock handler
+      // must not interpret this as a pause request.
+      this.ignoreUnlock = true;
+      if (document.pointerLockElement) document.exitPointerLock();
+    } else {
+      if (document.activeElement?.id === 'chatInput') document.activeElement.blur();
+      this.ignoreUnlock = false;
+      if (document.pointerLockElement !== this.canvas) this.requestPointerLock();
     }
   }
 
@@ -1430,15 +1476,23 @@ export class NightfallGame {
     this.ui.feed(`${(name || 'ALLY').toUpperCase()} marked a location.`, 'info', 'PING');
   }
 
+  weatherPreset(id) {
+    return (this.world?.weatherList || []).find((item) => item.id === id) || null;
+  }
+
   weatherLabel(id = this.world?.weather?.kind) {
-    const preset = this.world?.getWeatherPreset?.(id);
+    const preset = this.weatherPreset(id);
     return preset?.label || String(id || 'RAIN').toUpperCase();
   }
 
   applyWeather(id, announce = false) {
     if (!this.world?.setWeather) return;
-    const already = this.world.weather.kind === id;
-    const preset = this.world.setWeather(id, true);
+    const preset = this.weatherPreset(id);
+    if (!preset) return;
+    const already = this.world.weather.kind === preset.id;
+    // Let world.update() blend fog, sky and precipitation instead of snapping
+    // between presets. Audio keeps its own 1.5s crossfade.
+    this.world.setWeather(preset.id, false);
     this.ui.setWeather?.(preset.label, preset.tagline, preset.id);
     this.audio.setWeather?.(preset.id);
     if (announce && !already) {
@@ -1448,7 +1502,7 @@ export class NightfallGame {
   }
 
   selectWeather(id) {
-    const preset = (this.world?.weatherList || []).find((item) => item.id === id);
+    const preset = this.weatherPreset(id);
     if (!preset) return;
     if (this.world.weather.kind === preset.id) {
       this.ui.toast(`${preset.label} weather is already active.`, 'info', 1600);
@@ -1619,8 +1673,8 @@ export class NightfallGame {
       this.ui.toast('Exit the vehicle before starting a race.', 'warn', 2200);
       return;
     }
-    if (this.activity?.phase === 'running') {
-      this.ui.toast('A race is already live. Finish it before starting another.', 'info', 2200);
+    if (this.activity) {
+      this.ui.toast('A race is still wrapping up. Wait for it to close.', 'info', 2200);
       return;
     }
     const station = kind
@@ -1647,6 +1701,10 @@ export class NightfallGame {
       reject('Unknown race gate.');
       return;
     }
+    if (this.activity) {
+      reject('A race is still wrapping up. Try again shortly.');
+      return;
+    }
     if (!remote?.alive) {
       reject('You must be alive to start a race.');
       return;
@@ -1669,7 +1727,7 @@ export class NightfallGame {
       return false;
     };
     if (!this.isHost || !this.player?.alive || this.status !== 'playing') return fail('Host is unavailable.');
-    if (this.activity?.phase === 'running') return fail('A race is already live.');
+    if (this.activity) return fail('A race is still wrapping up.');
     const station = ACTIVITY_STATIONS.find((s) => s.kind === kind);
     if (!station) return fail('Unknown race gate.');
     const vehicle = this.findRaceVehicle(kind, station, racerId);
@@ -1682,6 +1740,7 @@ export class NightfallGame {
       id: `${kind}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       kind,
       label: isBike ? 'BIKE RACE' : 'CAR RACE',
+      vehicleId: vehicle.id,
       phase: 'running',
       checkpoints: route.map((point, index) => ({
         id: `gate-${index + 1}`,
@@ -1747,12 +1806,19 @@ export class NightfallGame {
 
   handleActivityMounted(msg) {
     if (!this.isHost || !this.activity || msg.raceId !== this.activity.id) return;
-    if (msg.failed || msg.racerId !== this.activity.racerId) {
+    // Only the assigned rider may acknowledge the mount, and it must be the
+    // exact vehicle the host reserved for this race.
+    const valid = !msg.failed
+      && msg.racerId === this.activity.racerId
+      && msg.from === this.activity.racerId
+      && msg.vehicleId === this.activity.vehicleId
+      && this.remotePlayers.has(msg.racerId);
+    if (!valid) {
       this.failActivity('RIDER NOT MOUNTED');
       return;
     }
     const car = this.cars.find((c) => c.id === msg.vehicleId);
-    if (car && this.remotePlayers.has(msg.racerId)) car.occupiedBy = msg.racerId;
+    if (car) car.occupiedBy = msg.racerId;
   }
 
   handleActivityResponse(msg) {
@@ -2244,7 +2310,12 @@ export class NightfallGame {
   }
 
   resolveVehicleCollisions(car, forwardX, forwardZ) {
+    // Probe the hull with three points, but apply only the largest correction
+    // once. Stacking three separate nudges made wall grazes snap the car.
     let hit = false;
+    let bestX = 0;
+    let bestZ = 0;
+    let bestDistanceSq = 0;
     const isBike = car.kind === 'bike';
     const hullRadius = isBike ? 0.58 : 1.02;
     for (const offset of (isBike ? [-0.92, 0, 0.92] : [-1.45, 0, 1.45])) {
@@ -2254,14 +2325,22 @@ export class NightfallGame {
       for (const collider of this.world.colliders) {
         circleBoxResolve(point, hullRadius, collider);
       }
-      if (this.resolveCarHulls(point, isBike ? 0.62 : 1.12, false)) hit = true;
+      this.resolveCarHulls(point, isBike ? 0.62 : 1.12, false);
       const dx = point.x - startX;
       const dz = point.z - startZ;
-      if (Math.abs(dx) + Math.abs(dz) > 0.001) {
-        car.x += dx;
-        car.z += dz;
+      const distanceSq = dx * dx + dz * dz;
+      if (distanceSq > 0.000001) {
         hit = true;
+        if (distanceSq > bestDistanceSq) {
+          bestDistanceSq = distanceSq;
+          bestX = dx;
+          bestZ = dz;
+        }
       }
+    }
+    if (hit) {
+      car.x += bestX;
+      car.z += bestZ;
     }
     return hit;
   }
@@ -2383,21 +2462,25 @@ export class NightfallGame {
 
   useInteract() {
     if (!this.player || !this.player.alive || this.status !== 'playing') return;
-    if (this.currentMode === 'car') {
-      this.vehicleInteract();
-      return;
-    }
-    const shard = this.nearestShard(SHARD_RANGE);
+    // Circuit checkpoints are designed to be taken from the driver's seat, so
+    // E collects before F exits. Other vehicle missions keep F as exit only.
+    const inVehicleRoute = this.currentMode === 'car' && !!this.mission?.requireVehicle;
+    const shard = this.nearestShard(inVehicleRoute ? SHARD_VEHICLE_RANGE : SHARD_RANGE);
     if (shard) {
       if (this.mission?.mode === 'hack') {
         this.ui.toast('Upload in progress — stay inside the relay.', 'info', 1600);
         return;
       }
       if (this.isHost) this.hostCollectShard(shard.id);
-      else {
-        this.network?.send('shard-request', { shardId: shard.id });
+      else if (this.network?.send('shard-request', { shardId: shard.id })) {
         this.ui.toast('Breach requested — hold position.', 'info', 1800);
+      } else {
+        this.ui.toast('Breach request failed — link is offline.', 'error', 2200);
       }
+      return;
+    }
+    if (this.currentMode === 'car') {
+      this.vehicleInteract();
       return;
     }
     const car = this.nearestCar();
@@ -2459,23 +2542,37 @@ export class NightfallGame {
     if (!car) return;
     const sin = Math.sin(car.yaw);
     const cos = Math.cos(car.yaw);
-    let x = car.x + cos * 1.7;
-    let z = car.z - sin * 1.7;
-    let blocked = false;
-    for (const collider of this.world.colliders) {
-      const point = { x, z };
-      if (circleBoxResolve(point, 0.5, collider)) {
-        blocked = true;
-        break;
-      }
-    }
-    if (!blocked && this.resolveCarHulls({ x, z }, 0.5, false)) blocked = true;
-    if (blocked) {
-      x = car.x + cos * -1.7;
-      z = car.z - sin * -1.7;
-    }
+    const forwardX = sin;
+    const forwardZ = cos;
     const bounds = this.world.metro.bounds - 4;
-    this.player.pos.set(clamp(x, -bounds, bounds), 0, clamp(z, -bounds, bounds));
+    const candidates = [
+      { x: car.x + cos * 1.8, z: car.z - sin * 1.8 },
+      { x: car.x - cos * 1.8, z: car.z + sin * 1.8 },
+      { x: car.x + forwardX * 2.4, z: car.z + forwardZ * 2.4 },
+      { x: car.x - forwardX * 2.4, z: car.z - forwardZ * 2.4 },
+    ];
+    let exit = null;
+    for (const candidate of candidates) {
+      const point = {
+        x: clamp(candidate.x, -bounds, bounds),
+        z: clamp(candidate.z, -bounds, bounds),
+      };
+      let blocked = false;
+      for (const collider of this.world.colliders) {
+        if (circleBoxResolve({ ...point }, 0.5, collider)) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked || this.resolveCarHulls({ ...point }, 0.5, false)) continue;
+      exit = point;
+      break;
+    }
+    // Last resort: stay with the car rather than spawning inside a building or
+    // outside the playable perimeter.
+    const x = exit ? exit.x : clamp(car.x, -bounds, bounds);
+    const z = exit ? exit.z : clamp(car.z, -bounds, bounds);
+    this.player.pos.set(x, 0, z);
     this.player.bodyYaw = car.yaw;
     this.player.velY = 0;
     this.player.grounded = true;
@@ -2660,7 +2757,17 @@ export class NightfallGame {
       return;
     }
     if (this.currentMode === 'car') {
-      this.ui.setInteraction('', false);
+      if (this.activity?.phase === 'running') {
+        this.ui.setInteraction(`RACE LIVE — GATE ${this.activity.next + 1}/${this.activity.checkpoints.length}`, true, 'G');
+        return;
+      }
+      const shard = this.mission?.requireVehicle ? this.nearestShard(SHARD_VEHICLE_RANGE) : null;
+      if (shard) {
+        const total = this.mission?.shards?.length || 0;
+        this.ui.setInteraction(`CHECKPOINT ${(shard.order ?? 0) + 1}${total ? `/${total}` : ''} — CLEAR`, true, 'E');
+      } else {
+        this.ui.setInteraction('', false);
+      }
       return;
     }
     if (this.activity?.phase === 'running') {
@@ -3024,6 +3131,7 @@ export class NightfallGame {
     }
     this.mission.breached += 1;
     this.mission.score += mode === 'circuit' ? 700 : 500;
+    if (mode === 'circuit') this.ui.toast(`Checkpoint ${this.mission.breached} cleared.`, 'ok', 1600);
     this.network?.send('shard-collected', { shardId: shard.id, by: this.session?.selfId, name: this.myName });
     this.onAllCachesSecured();
     this.sendFullState(true);
@@ -3427,6 +3535,37 @@ export class NightfallGame {
     this.remoteEnemies.clear();
   }
 
+  // Host migration must not respawn security from scratch: adopt the last
+  // host-authoritative enemies so health, alert state and positions survive.
+  adoptRemoteEnemies() {
+    this.clearEnemies();
+    for (const enemy of this.remoteEnemies.values()) {
+      if (!enemy.alive) continue;
+      this.localEnemies.push({
+        id: enemy.id,
+        type: enemy.type,
+        x: enemy.x,
+        y: enemy.y,
+        z: enemy.z,
+        homeX: enemy.x,
+        homeZ: enemy.z,
+        yaw: enemy.yaw,
+        health: enemy.health,
+        maxHealth: enemy.type === 'drone' ? 80 : 100,
+        alive: true,
+        alert: !!enemy.alert,
+        fireTimer: 0.4 + Math.random() * 1.2,
+        patrolPhase: Math.random() * TAU,
+        orbitPhase: enemy.orbitPhase || 0,
+        model: enemy.model,
+        group: enemy.group,
+        shadow: enemy.shadow,
+        moveSpeed: enemy.moveSpeed || 0,
+      });
+    }
+    this.remoteEnemies.clear();
+  }
+
   updateEnemies(dt, elapsed) {
     if (!this.isHost || !this.mission) return;
     // The central plaza is a safe zone: security units never engage a player
@@ -3823,6 +3962,11 @@ export class NightfallGame {
       shards: (incoming.shards || []).map((s) => ({ ...s })),
       extraction: { ...(incoming.extraction || this.world.extraction) },
     };
+    // The contract ladder is owned by the host, but a guest must remember it
+    // before a migration or the next mission would restart at contract one.
+    if (Number.isFinite(this.mission.contractIndex)) {
+      this.missionCount = Math.max(this.missionCount, this.mission.contractIndex + 1);
+    }
     this.syncShardVisuals();
     this.applyStateCars(msg.cars);
     if (this.mission.mode === 'vehicle') {
@@ -3864,6 +4008,11 @@ export class NightfallGame {
     } else if (previousActivityId) {
       this.activity = null;
       this.clearRaceVisuals();
+    }
+    // Idempotent by activity id: a guest who joined mid-race or missed the
+    // phase transition still banks a win they actually earned.
+    if (this.activity?.phase === 'finished' && this.activity.winnerId === (this.session?.selfId || 'solo')) {
+      this.awardActivityCredit(this.activity);
     }
 
     const phase = this.mission.phase;
@@ -3986,6 +4135,7 @@ export class NightfallGame {
         id: this.activity.id,
         kind: this.activity.kind,
         label: this.activity.label,
+        vehicleId: this.activity.vehicleId,
         phase: this.activity.phase,
         checkpoints: this.activity.checkpoints.map((point) => ({ ...point })),
         next: this.activity.next,
@@ -4063,12 +4213,17 @@ export class NightfallGame {
 
   ensureRemote(id, info = {}) {
     if (!id || id === this.session?.selfId) return null;
+    const known = this.network?.players?.get(id);
+    // Room identity is authoritative; a gameplay packet may never rename or
+    // recolour another operative.
+    const authoritativeName = safeRemoteName(known?.name, null);
+    const authoritativeColor = known?.color !== undefined
+      ? normalizePlayerColor(known.color, null)
+      : normalizePlayerColor(info.color, null);
     let remote = this.remotePlayers.get(id);
     if (remote) {
-      if (info.name) remote.name = info.name;
-      const nextColor = info.color !== undefined
-        ? normalizePlayerColor(info.color, remote.color)
-        : remote.color;
+      if (authoritativeName) remote.name = authoritativeName;
+      const nextColor = authoritativeColor !== null ? authoritativeColor : remote.color;
       const nextVariant = normalizeVariant(info.variant || remote.variant);
       if (nextVariant !== remote.variant || nextColor !== remote.color) {
         remote.color = nextColor;
@@ -4076,9 +4231,8 @@ export class NightfallGame {
       }
       return remote;
     }
-    const known = this.network?.players?.get(id);
-    const color = info.color ?? known?.color ?? 0xff2d95;
-    const name = info.name || known?.name || 'ALLY';
+    const color = authoritativeColor ?? normalizePlayerColor(info.color, 0xff2d95);
+    const name = authoritativeName || safeRemoteName(info.name);
     const variant = normalizeVariant(info.variant || known?.variant || 'male');
     const skin = variant === 'female' ? 0xe0b598 : 0xc99a79;
     const char = buildCharacter({ color, skin, variant });
@@ -4115,7 +4269,12 @@ export class NightfallGame {
 
   handlePlayerState(msg) {
     if (!msg.from || msg.from === this.session?.selfId) return;
-    const remote = this.ensureRemote(msg.from, { name: msg.name, color: msg.color, variant: msg.variant });
+    const known = this.network?.players?.get(msg.from);
+    const remote = this.ensureRemote(msg.from, {
+      name: known?.name || msg.name,
+      color: known?.color ?? msg.color,
+      variant: msg.variant,
+    });
     if (!remote) return;
     remote.target.set(msg.x || 0, msg.y || 0, msg.z || 0);
     remote.targetYaw = msg.ry || 0;
@@ -4204,6 +4363,9 @@ export class NightfallGame {
       case 'shard-request':
         if (this.isHost) this.handleShardRequest(msg);
         break;
+      case 'shard-response':
+        this.handleShardResponse(msg);
+        break;
       case 'shard-collected':
         if (!this.isHost && msg.from === this.session.hostId) this.handleRemoteShardCollected(msg);
         break;
@@ -4235,18 +4397,23 @@ export class NightfallGame {
         break;
       case 'chat': {
         const text = String(msg.text || '').replace(/[<>]/g, '').trim().slice(0, 120);
-        if (text) this.ui.chat(msg.name || this.remotePlayers.get(msg.from)?.name || 'ALLY', text, msg.color ?? 0xff2d95);
+        if (text) {
+          const identity = messageIdentity(this, msg.from, msg.name, msg.color);
+          this.ui.chat(identity.name, text, identity.color);
+        }
         break;
       }
-      case 'map-ping':
+      case 'map-ping': {
+        const identity = messageIdentity(this, msg.from, msg.name, msg.color);
         this.addPing(
           msg.id || `${msg.from}-${this.elapsed}`,
-          msg.name || this.remotePlayers.get(msg.from)?.name || 'ALLY',
+          identity.name,
           msg.x,
           msg.z,
-          msg.color ?? 0xff2d95,
+          identity.color,
         );
         break;
+      }
       case 'redeploy':
         if (this.isHost && this.mission?.phase === 'complete') this.resetMission();
         break;
@@ -4255,17 +4422,24 @@ export class NightfallGame {
     }
   }
 
+  sendShardResponse(to, accepted, shardId, reason = '') {
+    if (!to || !this.network) return;
+    this.network.send('shard-response', { to, accepted, shardId, reason });
+  }
+
   handleShardRequest(msg) {
-    if (!this.isHost || !this.mission || this.mission.phase !== 'collect') return;
+    if (!this.isHost || !this.mission) return;
+    const reject = (reason) => this.sendShardResponse(msg.from, false, msg.shardId, reason);
+    if (this.mission.phase !== 'collect') return reject('Cache phase is closed.');
     const remote = this.remotePlayers.get(msg.from);
-    if (!remote || !remote.alive) return;
+    if (!remote || !remote.alive) return reject('You must be alive and linked to breach a cache.');
     const shard = this.mission.shards.find((s) => s.id === msg.shardId);
     const error = this.shardCollectionError(shard, {
       pos: remote.pos,
       inCar: !!remote.inCar,
       name: remote.name,
     });
-    if (error !== null) return;
+    if (error !== null) return reject(error);
     let split = 0;
     if (this.mission.mode === 'circuit') {
       split = Math.max(0, this.mission.elapsed - (this.mission.lastSplit || 0));
@@ -4274,6 +4448,10 @@ export class NightfallGame {
     this.applyShardCollected(shard, remote.name, true);
     this.mission.breached += 1;
     this.mission.score += this.mission.requireVehicle ? 700 : 500;
+    if (this.mission.mode === 'circuit') {
+      this.ui.toast(`Checkpoint ${this.mission.breached} cleared by ${remote.name}.`, 'ok', 1600);
+    }
+    this.network?.send('shard-response', { to: remote.id, accepted: true, shardId: shard.id });
     this.network?.send('shard-collected', {
       shardId: shard.id,
       by: remote.id,
@@ -4285,11 +4463,24 @@ export class NightfallGame {
     this.sendFullState(true);
   }
 
+  handleShardResponse(msg) {
+    if (this.isHost || !msg || msg.from !== this.session?.hostId) return;
+    if (msg.to !== (this.session?.selfId || 'solo')) return;
+    if (!msg.accepted) {
+      const reason = String(msg.reason || '').slice(0, 120);
+      this.ui.toast(reason || 'The host rejected that breach.', 'warn', 2400);
+      return;
+    }
+    const noun = this.mission?.mode === 'circuit' ? 'Checkpoint cleared.' : 'Cache breached.';
+    this.ui.toast(noun, 'ok', 1600);
+  }
+
   handleRemoteShardCollected(msg) {
     if (this.isHost || !this.mission) return;
     const shard = this.mission.shards.find((s) => s.id === msg.shardId);
     if (!shard) return;
-    this.applyShardCollected(shard, msg.name || 'ALLY', true);
+    const identity = messageIdentity(this, msg.from, msg.name, msg.color);
+    this.applyShardCollected(shard, identity.name, true);
     if (msg.all || this.mission.shards.every((s) => s.collected)) {
       if (this.mission.phase === 'collect') this.mission.phase = 'extract';
       this.world.extractionGroup.visible = true;
@@ -4298,21 +4489,29 @@ export class NightfallGame {
 
   handleRemoteShot(msg) {
     if (!this.isHost) return;
+    const remote = this.remotePlayers.get(msg.from);
+    if (!remote || !remote.alive) return;
     const enemy = this.localEnemies.find((e) => e.id === msg.enemyId && e.alive);
     if (!enemy) return;
-    const ox = Number(msg.ox) || 0;
-    const oz = Number(msg.oz) || 0;
-    const ex = Number(msg.ex) || 0;
-    const ez = Number(msg.ez) || 0;
+    const values = [msg.ox, msg.oy, msg.oz, msg.ex, msg.ey, msg.ez].map(Number);
+    if (values.some((value) => !Number.isFinite(value))) return;
+    const [ox, oy, oz, ex, , ez] = values;
+    // A guest cannot fire faster than the weapon allows, from another player's
+    // position, or from behind a wall.
+    const now = performance.now();
+    const lastShot = this.remoteShotTimes.get(msg.from) || 0;
+    if (now - lastShot < FIRE_INTERVAL * 1000 * 0.75) return;
+    if (dist2D(ox, oz, remote.pos.x, remote.pos.z) > 3) return;
     if (dist2D(ox, oz, enemy.x, enemy.z) > 70) return;
     if (pointSegmentDistance(enemy.x, enemy.z, ox, oz, ex, ez) > 2.3) return;
-    const from = new THREE.Vector3(ox, Number(msg.oy) || 1.2, oz);
+    const from = new THREE.Vector3(ox, clamp(oy, 0.2, 4), oz);
     const to = new THREE.Vector3(enemy.x, enemy.type === 'drone' ? enemy.y : 1.1, enemy.z);
     if (this.isShotBlocked(from, to)) return;
+    this.remoteShotTimes.set(msg.from, now);
     this.effects.tracer(from, to, 0xfff1c9);
     // Remote shots use the base weapon damage. The host's FIREPOWER upgrade
     // must never inflate or nerf a guest's bullets.
-    this.applyEnemyDamage(enemy, WEAPON_DAMAGE, this.remotePlayers.get(msg.from)?.name || 'ALLY');
+    this.applyEnemyDamage(enemy, WEAPON_DAMAGE, remote.name);
   }
 
   handleEnemyShot(msg) {
@@ -4362,6 +4561,7 @@ export class NightfallGame {
       this.remotePlayers.delete(id);
     }
     if (this.network) this.network.players.delete(id);
+    this.remoteShotTimes.delete(id);
     this.updateRoster();
     const name = payload?.player?.name || remote?.name || 'ALLY';
     this.ui.feed(`${name.toUpperCase()} disconnected from the district.`, 'warn', 'LINK');
@@ -4375,11 +4575,16 @@ export class NightfallGame {
     const becameHost = this.network?.isHost;
     if (becameHost && !this.isHost) {
       this.isHost = true;
-      this.clearRemoteEnemies();
-      if (!this.mission) this.startMission();
-      else {
+      if (this.mission?.contractIndex !== undefined) {
+        this.missionCount = Math.max(this.missionCount, this.mission.contractIndex + 1);
+      }
+      if (!this.mission) {
+        this.clearRemoteEnemies();
+        this.startMission();
+      } else {
+        this.adoptRemoteEnemies();
+        if (!this.localEnemies.length) this.spawnLocalEnemies();
         this.syncShardVisuals();
-        this.spawnLocalEnemies();
         this.sendFullState(true);
       }
       this.ui.toast('You are now hosting the city. Keep the contract alive.', 'info', 5000);
@@ -4461,6 +4666,7 @@ export class NightfallGame {
     // them removes a surprising amount of DOM and canvas work per frame.
     if (this.hudTick < 0.045) return;
     this.hudTick = 0;
+    this.ui.setClock();
     this.ui.setVitals(this.player.health, this.player.stamina, this.maxHealth, this.maxStamina);
     if (this.currentMode === 'foot') this.ui.setAmmo(this.player.ammo, this.player.reserve, this.player.reloading > 0 ? 1 - this.player.reloading / RELOAD_SECONDS : 0);
     if (this.activity) this.ui.setActivity(this.activity, this.activityDistance());
@@ -4471,6 +4677,11 @@ export class NightfallGame {
     if (this.mission) {
       this.ui.setMission(this.mission, this.objectiveDistance());
     }
+    const objectiveTarget = this.objectiveTarget();
+    this.ui.setCompass(
+      objectiveTarget,
+      this.currentMode === 'car' && this.localCar ? this.localCar.yaw : this.player.bodyYaw,
+    );
     this.ui.setAlert(this.isHost ? (this.alertCount || 0) : (this.remoteAlertCount || 0));
     this.ui.updateRemoteLabels(
       this.camera,
@@ -4562,7 +4773,10 @@ export class NightfallGame {
 
     if (performance.now() - this.lastFpsUpdate > 700) {
       this.lastFpsUpdate = performance.now();
-      this.ui.setFps(this.fps, this.network?.latency ?? null);
+      const label = this.session?.online
+        ? (this.network?.mode === 'server' || this.network?.server ? 'RELAY' : 'P2P')
+        : 'LOCAL';
+      this.ui.setFps(this.fps, this.network?.latency ?? null, label);
     }
 
     const locked = document.pointerLockElement === this.canvas;
@@ -4572,24 +4786,51 @@ export class NightfallGame {
     }
   }
 
-  objectiveDistance() {
-    if (!this.mission || !this.player) return Infinity;
+  objectiveTarget() {
+    if (!this.player) return null;
+    if (this.activity?.phase === 'running') {
+      const gate = this.activity.checkpoints?.[this.activity.next];
+      if (gate) return this.pointTarget(gate.x, gate.z);
+    }
+    if (!this.mission) return null;
     if (this.mission.phase === 'collect') {
-      let best = Infinity;
       const ordered = this.mission.mode === 'sequence'
         || this.mission.mode === 'circuit'
         || this.mission.mode === 'courier';
+      let best = null;
+      let bestDistance = Infinity;
       for (const shard of this.mission.shards) {
         if (shard.collected) continue;
         if (ordered && shard.order !== this.mission.breached) continue;
-        best = Math.min(best, dist2D(this.player.pos.x, this.player.pos.z, shard.x, shard.z));
+        const distance = dist2D(this.player.pos.x, this.player.pos.z, shard.x, shard.z);
+        if (distance < bestDistance) {
+          best = shard;
+          bestDistance = distance;
+        }
       }
-      return best;
+      return best ? this.pointTarget(best.x, best.z) : null;
     }
     if (this.mission.phase === 'extract' || this.mission.phase === 'extracting') {
-      return dist2D(this.player.pos.x, this.player.pos.z, this.mission.extraction.x, this.mission.extraction.z);
+      return this.pointTarget(this.mission.extraction.x, this.mission.extraction.z);
     }
-    return 0;
+    return null;
+  }
+
+  pointTarget(x, z) {
+    const dx = x - this.player.pos.x;
+    const dz = z - this.player.pos.z;
+    return {
+      x,
+      z,
+      distance: Math.hypot(dx, dz),
+      bearing: Math.atan2(dx, dz),
+    };
+  }
+
+  objectiveDistance() {
+    const target = this.objectiveTarget();
+    if (target) return target.distance;
+    return this.mission ? 0 : Infinity;
   }
 
   activityDistance() {

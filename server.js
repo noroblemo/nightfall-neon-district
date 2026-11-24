@@ -328,6 +328,10 @@ wss.on('connection', (ws, req, url) => {
     }
 
     const relay = { ...msg, from: player.id };
+    // Identity is owned by the room roster, not by each gameplay packet.
+    // Always overwrite it with the server's values for this connection.
+    relay.name = player.name;
+    relay.color = player.color;
     broadcast(room, relay, player.id);
   });
 

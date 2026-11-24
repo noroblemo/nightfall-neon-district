@@ -390,10 +390,12 @@ export class AudioEngine {
   }
 
   _ambientTick() {
-    if (!this.started || !this.ctx || this.muted) return;
+    if (!this.started || !this.ctx) return;
     const now = this.ctx.currentTime;
     if (now < this.nextAmbientEvent) return;
-    this._triggerWeatherEvent(this.weather);
+    // Keep the event clock moving while muted so unmuting never dumps a
+    // backlog of foghorns, droplets or chimes into the mix at once.
+    if (!this.muted) this._triggerWeatherEvent(this.weather);
     this.nextAmbientEvent = now + this._weatherEventDelay(this.weather);
   }
 

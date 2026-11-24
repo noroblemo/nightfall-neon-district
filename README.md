@@ -9,7 +9,8 @@ A browser-based co-op open-world action game with Forza-style arcade driving, bu
 ## Features
 
 - **Open world** — a procedural neon city (~436m across) with buildings, plaza, metro landmarks, dynamic lights, bloom post-processing and a finished, collidable perimeter.
-- **Switchable weather** — rain, clear skies, dense fog, electric storms and snow, with smooth transitions and a distinct soundscape for each: rain patter, city air, foghorns, lightning-triggered thunder and icy wind. Press `V` in-game or use the **WEATHER** toggle in the pause menu (the host picks for the room).
+- **Switchable weather** — rain, clear skies, dense fog, electric storms and snow, with smooth transitions and a distinct soundscape for each: rain patter, city air, foghorns, lightning-triggered thunder and icy wind. Press `V` in-game, click the weather tag in the HUD, or use the **WEATHER** toggle in the pause menu (the host picks for the room).
+- **Situation HUD** — a local clock, an objective compass with range, a live speedometer, and a connection-readout (`RELAY`, `P2P` or `LOCAL`) with smoothed FPS. The HUD reflows cleanly on small screens.
 - **Adaptive audio** — an original synthwave score during contracts, plus positional foley for weapons, footsteps, vehicles and pickups. `M` or the pause-menu button mutes everything.
 - **Contract ladder** — nine escalating contracts, from GHOST PROTOCOL through timed circuits, courier runs and bounties to LAST SIGNAL. Clear one and the next begins automatically.
 - **Random races** — BIKE RACE and CAR RACE gates sit beside the parked vehicles at the plaza. Press `G` at a gate (or request one as a guest) to launch a timed checkpoint sprint along one of two randomly chosen road-grid routes. Credits and ammo are awarded on a win; races never alter the nine-contract ladder.
@@ -122,18 +123,19 @@ Any Node host works:
 | `Space` | Jump (foot) / Handbrake (car) |
 | `Mouse` | Aim; `LMB` fire |
 | `F` | Enter / exit vehicle (join a partner's car as passenger) |
-| `E` | Interact — breach data cache |
+| `E` | Interact — breach data cache / clear an in-car circuit checkpoint |
 | `G` | Start a random bike/car race while standing at a plaza gate |
 | `R` | Reload (foot) / flip car (driving) |
 | `Q` | Map ping for your partner |
 | `V` | Cycle weather (or use the pause-menu weather toggle) |
 | `T` | Chat |
 | `M` | Mute |
+| `Esc` | Close Controls or chat, then pause / resume |
 
 ## Multiplayer architecture
 
 - `server.js` — static file host + WebSocket relay (`/ws`). Relays gameplay messages inside rooms; no game simulation server-side. `/api/health` for status.
-- Host client owns the mission and optional races: the contract ladder, shards, enemies, extraction, weather, race ownership/timers/routes and storm strikes. Guests send intents (`shard-request`, `activity-request`, `shot`, `weather-request`, `color-request`, `chat`, `map-ping`, `player-state`); the host validates (range + line-of-sight anti-cheat, assigned racer only, mount acknowledgement, one driver per car) and broadcasts authoritative state at ~11 Hz. Remote shots use base weapon damage, not the host's upgrades. Vehicle state includes the driver and passenger seat, and the driver seat hands over cleanly when someone exits. Suit colours are assigned by the relay server in server rooms and by the host in P2P rooms, so two operatives can never share a colour.
+- Host client owns the mission and optional races: the contract ladder, shards, enemies, extraction, weather, race ownership/timers/routes and storm strikes. Guests send intents (`shard-request`, `activity-request`, `shot`, `weather-request`, `color-request`, `chat`, `map-ping`, `player-state`); the host validates (range + line-of-sight anti-cheat, assigned racer only, mount acknowledgement, race wrap-up guard, one driver per car) and broadcasts authoritative state at ~11 Hz. Remote shots use base weapon damage, not the host's upgrades. Vehicle state includes the driver and passenger seat, and the driver seat hands over cleanly when someone exits. Suit colours are assigned by the relay server in server rooms and by the host in P2P rooms, so two operatives can never share a colour. The relay rewrites `name` and `color` from the room roster, so gameplay packets cannot spoof another operative's identity.
 - If the relay is unreachable, `src/network.js` falls back to PeerJS WebRTC mesh (2 players).
 
 ## Project layout

@@ -1,4 +1,4 @@
-import { clamp, formatTime, formatNumber, projectToScreen, TAU } from './utils.js';
+import { angleDelta, clamp, formatTime, formatNumber, projectToScreen, TAU } from './utils.js';
 
 const $ = (id) => document.getElementById(id);
 const cache = new Map();
@@ -38,6 +38,8 @@ export class UI {
     this.speedoCtx = this.speedoCanvas.getContext('2d');
     this.lastSpeed = -1;
     this.lastBoost = -1;
+    this.lastThrottle = -1;
+    this.lastCompassAngle = null;
     this.missionBannerTimer = null;
     this.damageTimer = null;
     this.feedItems = [];
@@ -117,6 +119,31 @@ export class UI {
   setLatency(value, fps) {
     const label = value === null || value === undefined ? 'P2P' : `${Math.round(value)} MS`;
     setText($('networkLatency'), fps ? `${label} · ${fps} FPS` : label);
+  }
+
+  setClock(date = new Date()) {
+    const pad = (value) => String(value).padStart(2, '0');
+    setText($('hudClock'), `${pad(date.getHours())}:${pad(date.getMinutes())}`);
+  }
+
+  // `target.bearing` is a world yaw: 0 points north/+Z and positive values
+  // turn east/+X, matching the game's camera and minimap convention.
+  setCompass(target, heading = 0) {
+    const el = $('objectiveCompass');
+    if (!el) return;
+    if (!target || !Number.isFinite(target.distance) || !Number.isFinite(target.bearing)) {
+      el.classList.add('hidden');
+      this.lastCompassAngle = null;
+      return;
+    }
+    el.classList.remove('hidden');
+    setText($('compassDistance'), fmtDistance(target.distance));
+    const degrees = Math.round(45 + angleDelta(heading, target.bearing) * 180 / Math.PI);
+    if (degrees !== this.lastCompassAngle) {
+      const arrow = el.querySelector('.objective-compass__arrow');
+      if (arrow) arrow.style.transform = `rotate(${degrees}deg)`;
+      this.lastCompassAngle = degrees;
+    }
   }
 
   updateRemoteLabels(camera, width, height, remotes) {
@@ -531,10 +558,13 @@ export class UI {
     const boostPct = clamp(boost, 0, 1) * 100;
     const bar = $('boostBar');
     if (bar) bar.style.width = `${boostPct}%`;
-    if (Math.abs(this.lastSpeed - kmh) > 1 || Math.abs(this.lastBoost - boostPct) > 1) {
+    if (Math.abs(this.lastSpeed - kmh) > 1
+      || Math.abs(this.lastBoost - boostPct) > 1
+      || Math.abs(this.lastThrottle - clamp(throttle, -1, 1)) > 0.08) {
       this.lastSpeed = kmh;
       this.lastBoost = boostPct;
-      this.drawSpeedometer(Math.min(1, kmh / 240), boostPct / 100, throttle);
+      this.lastThrottle = clamp(throttle, -1, 1);
+      this.drawSpeedometer(Math.min(1, kmh / 240), boostPct / 100, this.lastThrottle);
     }
   }
 
@@ -898,10 +928,12 @@ export class UI {
     return { el, labelEl: label, distEl, dynamicLabel: entry.dynamicLabel ? label : null };
   }
 
-  setFps(fps, latency) {
-    // The map header doubles as a light debug readout.
-    const value = latency == null ? `${Math.round(fps)} FPS` : `${Math.round(latency)} MS · ${Math.round(fps)} FPS`;
-    setText($('networkLatency'), value);
+  setFps(fps, latency = null, label = 'LOCAL') {
+    // The map header doubles as a light connection/debug readout.
+    const parts = [label || 'LOCAL'];
+    if (latency != null) parts.push(`${Math.round(latency)} MS`);
+    parts.push(`${Math.round(fps)} FPS`);
+    setText($('networkLatency'), parts.join(' · '));
   }
 
   setChatOpen(open) {

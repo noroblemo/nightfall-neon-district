@@ -48,11 +48,16 @@ function readQuality() {
   return 'balanced';
 }
 
+function failBoot(message, progress = 1) {
+  ui.setLoading(progress, 'BOOT FAILURE');
+  ui.finishLoading();
+  ui.showLanding();
+  ui.showStartError(message);
+}
+
 async function boot() {
   if (!window.WebGL2RenderingContext) {
-    ui.setLoading(0.15, 'WEBGL 2 IS REQUIRED');
-    ui.showLanding();
-    ui.showStartError('This browser does not expose WebGL 2. Use a current Chrome, Edge, Firefox or Safari build.');
+    failBoot('This browser does not expose WebGL 2. Use a current Chrome, Edge, Firefox or Safari build.', 0.15);
     return;
   }
 
@@ -68,9 +73,7 @@ async function boot() {
     });
   } catch (err) {
     console.error(err);
-    ui.setLoading(0.15, 'RENDERER UNAVAILABLE');
-    ui.showLanding();
-    ui.showStartError('WebGL could not start. Close other 3D tabs, update your graphics driver, then reload.');
+    failBoot('WebGL could not start. Close other 3D tabs, update your graphics driver, then reload.', 0.15);
     return;
   }
 
@@ -139,21 +142,23 @@ async function boot() {
 
   let appliedWidth = window.innerWidth;
   let appliedHeight = window.innerHeight;
+  let appliedDpr = renderer.getPixelRatio();
 
   function applyDpr() {
     const dpr = Math.min(window.devicePixelRatio || 1, quality.cap) * dynamicScale;
-    renderer.setPixelRatio(dpr);
-    // setPixelRatio already resizes to the stored dimensions; only resize when
-    // the window actually changed so adaptive steps do not reallocate twice.
+    // setPixelRatio reallocates the drawing buffer and composer targets, so
+    // only apply it when the adaptive controller actually changed the scale.
+    if (dpr !== appliedDpr) {
+      appliedDpr = dpr;
+      renderer.setPixelRatio(dpr);
+      composer.setPixelRatio(dpr);
+    }
     if (appliedWidth !== window.innerWidth || appliedHeight !== window.innerHeight) {
       appliedWidth = window.innerWidth;
       appliedHeight = window.innerHeight;
       renderer.setSize(appliedWidth, appliedHeight, false);
       composer.setSize(appliedWidth, appliedHeight);
     }
-    // setPixelRatio internally calls setSize with the composer's stored CSS
-    // size, so no extra composer.setSize is needed for an adaptive DPR step.
-    composer.setPixelRatio(dpr);
     effects.setViewport(renderer.domElement.height, camera.fov);
   }
 
@@ -322,7 +327,5 @@ async function boot() {
 
 boot().catch((err) => {
   console.error('Nightfall boot failed', err);
-  ui.setLoading(0.3, 'BOOT FAILURE');
-  ui.showLanding();
-  ui.showStartError(`Boot failure: ${err?.message || 'unknown error'}. Reload the page and try again.`);
+  failBoot(`Boot failure: ${err?.message || 'unknown error'}. Reload the page and try again.`, 0.3);
 });
