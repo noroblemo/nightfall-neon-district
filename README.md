@@ -45,6 +45,21 @@ The playable operative is a rigged Blender GLB with `Idle`, `Walk`, `Sprint`, `A
 
 The build writes `assets/operator.glb` and refreshes the previews in `previews/`. Bump the `?v=` query on `OPERATOR_ASSET_URL` in `src/main.js` after rebuilding so browsers and CDNs fetch the new GLB. If the asset is missing or fails to load, the game falls back to the procedural operator.
 
+## Audio and contracts
+
+The soundtrack is fully procedural WebAudio: a 16-bar, 84 BPM D-minor night-drive loop with a weather-adaptive lowpass and dotted-eighth delay. All five weather presets have their own always-running ambience beds with smooth crossfades and unique incidental events (rain drips, clear-sky car passes, foghorns, thunder and ice chimes). A crossfaded 6-second noise buffer, held gain ramps, and a musical clock that keeps running while the music is faded out keep loops and pause/resume free of clicks or restart bursts.
+
+The six contracts are distinct missions, not scaled copies of one objective:
+
+1. **GHOST PROTOCOL** — stealth cache breach.
+2. **BLACKOUT RUN** — cut three grid nodes in order.
+3. **CROWN HEIST** — lift executive caches, then exfil by marked car.
+4. **SILENT AUCTION** — purge security before the lots unlock.
+5. **ZERO HOUR** — survive a timed security sweep, then breach caches.
+6. **LAST SIGNAL** — hold inside signal relays until each upload completes.
+
+The host remains authoritative for mission state, weather and enemy spawns in co-op.
+
 ## Playing with a friend (Mac ↔ Windows)
 
 Both players just need a modern browser (Chrome/Edge/Firefox/Safari). Three ways to connect, easiest first:

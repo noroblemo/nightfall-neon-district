@@ -30,12 +30,14 @@ const MAG_SIZE = 12;
 const MAX_RESERVE = 120;
 const PLAZA_SAFE_RADIUS = 30;
 
-// Contract ladder. Every contract reuses the same sandbox but changes the
-// cache count, security density, extraction hold and payout.
+// Contract ladder. Each mission changes the actual task, not just the
+// scaling: ordered sabotage, vehicle exfiltration, a kill-gated raid, a timed
+// security sweep, hold-to-upload relays, and the original stealth breach.
 const CONTRACTS = [
   {
     name: 'GHOST PROTOCOL',
-    tag: 'SECURE THREE DATA CACHES',
+    tag: 'BREACH THREE DATA CACHES',
+    mode: 'collect',
     caches: 3,
     guardBudget: 3,
     droneBudget: 3,
@@ -44,7 +46,8 @@ const CONTRACTS = [
   },
   {
     name: 'BLACKOUT RUN',
-    tag: 'CUT THE GRID NODES',
+    tag: 'CUT GRID NODES IN ORDER',
+    mode: 'sequence',
     caches: 3,
     guardBudget: 3,
     droneBudget: 4,
@@ -53,7 +56,8 @@ const CONTRACTS = [
   },
   {
     name: 'CROWN HEIST',
-    tag: 'LIFT FOUR EXECUTIVE CACHES',
+    tag: 'LIFT CACHE, EXFIL BY CAR',
+    mode: 'vehicle',
     caches: 4,
     guardBudget: 4,
     droneBudget: 4,
@@ -62,26 +66,32 @@ const CONTRACTS = [
   },
   {
     name: 'SILENT AUCTION',
-    tag: 'RAID THE NIGHT MARKET',
+    tag: 'PURGE SECURITY, THEN RAID',
+    mode: 'purge',
     caches: 4,
-    guardBudget: 4,
-    droneBudget: 5,
+    requiredKills: 3,
+    guardBudget: 5,
+    droneBudget: 4,
     extractSeconds: 10,
     bonus: 4000,
   },
   {
     name: 'ZERO HOUR',
-    tag: 'BEAT THE SECURITY SWEEP',
+    tag: 'SURVIVE THE SWEEP, THEN BREACH',
+    mode: 'sweep',
     caches: 5,
-    guardBudget: 5,
-    droneBudget: 6,
+    sweepSeconds: 22,
+    guardBudget: 6,
+    droneBudget: 7,
     extractSeconds: 11,
     bonus: 4400,
   },
   {
     name: 'LAST SIGNAL',
-    tag: 'PULL EVERY CACHE OFFLINE',
+    tag: 'HOLD INSIDE EVERY RELAY',
+    mode: 'hack',
     caches: 5,
+    hackSeconds: 2.4,
     guardBudget: 5,
     droneBudget: 7,
     extractSeconds: 12,
@@ -667,18 +677,44 @@ export class NightfallGame {
       chosen.push({ x: -40 + chosen.length * 38, z: 40, name: 'NIGHT MARKET' });
     }
 
+    const mode = contractDef.mode || 'collect';
+    const labelFor = (site, index) => {
+      if (mode === 'sequence') return `GRID NODE ${index + 1}`;
+      if (mode === 'vehicle') return `EXECUTIVE CACHE ${index + 1}`;
+      if (mode === 'purge') return `AUCTION LOT ${index + 1}`;
+      if (mode === 'sweep') return `SWEEP CACHE ${index + 1}`;
+      if (mode === 'hack') return `SIGNAL RELAY ${index + 1}`;
+      return site.name || `DATA CACHE ${index + 1}`;
+    };
+    const exfilCar = mode === 'vehicle'
+      ? (this.cars.find((car) => !car.occupiedBy) || this.cars[0])
+      : null;
+    const extraction = exfilCar
+      ? { x: exfilCar.x, z: exfilCar.z }
+      : { x: this.world.extraction.x, z: this.world.extraction.z };
+    this.world.extractionGroup.position.set(extraction.x, 0.16, extraction.z);
+
     this.mission = {
-      phase: 'collect',
+      phase: mode === 'sweep' ? 'sweep' : 'collect',
+      mode,
       shards: chosen.slice(0, targetCaches).map((site, index) => ({
         id: `shard-${this.missionCount}-${index}`,
         x: site.x,
         z: site.z,
-        name: site.name || 'CACHE',
+        name: labelFor(site, index),
+        order: index,
+        progress: 0,
         collected: false,
       })),
+      breached: 0,
+      kills: 0,
+      requiredKills: contractDef.requiredKills || 0,
+      sweepRemaining: contractDef.sweepSeconds || 0,
+      hackSeconds: contractDef.hackSeconds || 0,
+      extractCarId: exfilCar?.id || null,
       elapsed: 0,
       score: 0,
-      extraction: { x: this.world.extraction.x, z: this.world.extraction.z },
+      extraction,
       extractProgress: 0,
       extractSeconds: contractDef.extractSeconds,
       allInside: false,
@@ -702,11 +738,15 @@ export class NightfallGame {
     this.world.extractionGroup.visible = false;
     this.ui.hideResult();
     this.ui.showMissionBanner(contractDef.name, contractDef.tag, 'NEW CONTRACT', 4400);
-    this.ui.feed(
-      `Contract ${stage}/${CONTRACTS.length} — ${contractDef.name}. ${targetCaches} caches live.`,
-      'ok',
-      'CONTRACT',
-    );
+    const briefing = {
+      collect: `${targetCaches} caches live. Stay off the security net.`,
+      sequence: `${targetCaches} grid nodes live. Cut them in numerical order.`,
+      vehicle: `${targetCaches} executive caches. Exfiltration by car.`,
+      purge: `Neutralize ${contractDef.requiredKills} security units, then raid ${targetCaches} lots.`,
+      sweep: `Survive a ${contractDef.sweepSeconds}s security sweep, then breach ${targetCaches} caches.`,
+      hack: `Hold inside ${targetCaches} signal relays to upload.`,
+    }[mode] || `${targetCaches} caches live.`;
+    this.ui.feed(`Contract ${stage}/${CONTRACTS.length} — ${contractDef.name}. ${briefing}`, 'ok', 'CONTRACT');
     if (this.session?.online && this.isHost) this.sendFullState(true);
   }
 
@@ -1302,6 +1342,7 @@ export class NightfallGame {
     let bestDistance = maxDistance;
     for (const shard of this.mission.shards) {
       if (shard.collected) continue;
+      if (this.mission.mode === 'sequence' && shard.order !== this.mission.breached) continue;
       const d = dist2D(this.player.pos.x, this.player.pos.z, shard.x, shard.z);
       if (d < bestDistance) {
         bestDistance = d;
@@ -1333,6 +1374,10 @@ export class NightfallGame {
     }
     const shard = this.nearestShard(4.8);
     if (shard) {
+      if (this.mission?.mode === 'hack') {
+        this.ui.toast('Upload in progress — stay inside the relay.', 'info', 1600);
+        return;
+      }
       if (this.isHost) this.hostCollectShard(shard.id);
       else {
         this.network?.send('shard-request', { shardId: shard.id });
@@ -1571,7 +1616,15 @@ export class NightfallGame {
     }
     const shard = this.nearestShard(4.8);
     if (shard) {
-      this.ui.setInteraction('BREACH DATA CACHE', true, 'E');
+      const verb = {
+        collect: 'BREACH DATA CACHE',
+        sequence: 'CUT GRID NODE',
+        vehicle: 'LIFT EXECUTIVE CACHE',
+        purge: 'RAID AUCTION LOT',
+        sweep: 'BREACH SWEEP CACHE',
+        hack: 'UPLOADING SIGNAL RELAY',
+      }[this.mission?.mode] || 'BREACH DATA CACHE';
+      this.ui.setInteraction(verb, true, this.mission?.mode === 'hack' ? '◆' : 'E');
       return;
     }
     const car = this.nearestCar();
@@ -1580,9 +1633,13 @@ export class NightfallGame {
       return;
     }
     if (this.mission && (this.mission.phase === 'extract' || this.mission.phase === 'extracting')) {
-      const d = dist2D(this.player.pos.x, this.player.pos.z, this.world.extraction.x, this.world.extraction.z);
-      if (d < 9) {
-        this.ui.setInteraction('HOLD THE EXTRACTION ZONE', true, '◆');
+      const d = dist2D(this.player.pos.x, this.player.pos.z, this.mission.extraction.x, this.mission.extraction.z);
+      if (d < 10) {
+        this.ui.setInteraction(
+          this.currentMode === 'car' ? 'HOLD THE EXFIL ZONE' : 'HOLD THE EXTRACTION ZONE',
+          true,
+          '◆',
+        );
         return;
       }
     }
@@ -1665,13 +1722,57 @@ export class NightfallGame {
   updateMission(dt, elapsed) {
     if (!this.mission) return;
     if (this.isHost) {
+      if (this.mission.phase === 'sweep') {
+        this.mission.elapsed += dt;
+        this.mission.sweepRemaining = Math.max(0, this.mission.sweepRemaining - dt);
+        if (this.mission.sweepRemaining <= 0) {
+          this.mission.phase = 'collect';
+          this.ui.showMissionBanner('SWEEP CLEARED', 'BREACH THE CACHES', 'ZERO HOUR', 3600);
+          this.ui.feed('Security sweep passed. Caches are live.', 'ok', 'ZERO HOUR');
+        }
+      }
       if (this.mission.phase === 'collect' || this.mission.phase === 'extract' || this.mission.phase === 'extracting') {
         this.mission.elapsed += dt;
       }
+      if (this.mission.mode === 'hack' && this.mission.phase === 'collect') {
+        for (const shard of this.mission.shards) {
+          if (shard.collected) continue;
+          const nearby = this.player?.alive
+            && dist2D(this.player.pos.x, this.player.pos.z, shard.x, shard.z) < 7;
+          const remoteNearby = [...this.remotePlayers.values()].some((remote) => remote.alive
+            && dist2D(remote.pos.x, remote.pos.z, shard.x, shard.z) < 7);
+          if (nearby || remoteNearby) {
+            shard.progress = clamp((shard.progress || 0) + dt / Math.max(0.5, this.mission.hackSeconds || 2.4), 0, 1);
+            if (shard.progress >= 1) {
+              this.applyShardCollected(shard, this.myName, true);
+              this.mission.breached += 1;
+              this.mission.score += 500;
+              this.network?.send('shard-collected', { shardId: shard.id, by: this.session?.selfId, name: this.myName });
+              this.ui.feed(`${shard.name} uploaded.`, 'ok', 'RELAY');
+            }
+          }
+        }
+        if (this.mission.shards.every((s) => s.collected)) {
+          this.mission.phase = 'extract';
+          this.world.extractionGroup.visible = true;
+          this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL RELAYS UPLOADED', 5200);
+          this.ui.feed('All relays uploaded. Extraction gate is live.', 'ok', 'EXTRACT');
+        }
+      }
       if (this.mission.phase === 'extract' || this.mission.phase === 'extracting') {
-        const radius = 8.6;
+        if (this.mission.mode === 'vehicle') {
+          const car = this.cars.find((c) => c.id === this.mission.extractCarId);
+          if (car) {
+            this.mission.extraction.x = car.x;
+            this.mission.extraction.z = car.z;
+            this.world.extractionGroup.position.set(car.x, 0.16, car.z);
+          }
+        }
+        const ex = this.mission.extraction;
+        const radius = this.mission.mode === 'vehicle' ? 10 : 8.6;
         const localInside = this.player?.alive
-          && dist2D(this.player.pos.x, this.player.pos.z, this.world.extraction.x, this.world.extraction.z) < radius;
+          && dist2D(this.player.pos.x, this.player.pos.z, ex.x, ex.z) < radius
+          && (this.mission.mode !== 'vehicle' || this.currentMode === 'car');
         let allInside = localInside;
         for (const remote of this.remotePlayers.values()) {
           if (!remote.alive) {
@@ -1680,7 +1781,7 @@ export class NightfallGame {
           }
           const px = remote.pos.x;
           const pz = remote.pos.z;
-          if (dist2D(px, pz, this.world.extraction.x, this.world.extraction.z) > radius) allInside = false;
+          if (dist2D(px, pz, ex.x, ex.z) > radius) allInside = false;
         }
         if (allInside) {
           if (this.mission.phase === 'extract') {
@@ -1755,7 +1856,7 @@ export class NightfallGame {
       contractName,
     });
     this.effects.explosion(
-      new THREE.Vector3(this.world.extraction.x, 2, this.world.extraction.z),
+      new THREE.Vector3(this.mission.extraction.x, 2, this.mission.extraction.z),
       0x45f6ff,
       1.8,
     );
@@ -1782,17 +1883,32 @@ export class NightfallGame {
     if (!this.isHost || !this.mission || this.mission.phase !== 'collect') return;
     const shard = this.mission.shards.find((s) => s.id === shardId);
     if (!shard || shard.collected) return;
+    if (this.mission.mode === 'sequence' && shard.order !== this.mission.breached) {
+      this.ui.toast(`Cut grid node ${this.mission.breached + 1} first.`, 'warn', 2200);
+      return;
+    }
+    if (this.mission.requiredKills && this.mission.kills < this.mission.requiredKills) {
+      this.ui.toast(`Neutralize ${this.mission.requiredKills - this.mission.kills} more security units.`, 'warn', 2200);
+      return;
+    }
     const distance = dist2D(this.player.pos.x, this.player.pos.z, shard.x, shard.z);
     if (distance > 6.2) return;
     this.applyShardCollected(shard, this.myName, true);
+    this.mission.breached += 1;
     this.mission.score += 500;
     this.network?.send('shard-collected', { shardId: shard.id, by: this.session?.selfId, name: this.myName });
     if (this.mission.shards.every((s) => s.collected)) {
       this.mission.phase = 'extract';
       this.world.extractionGroup.visible = true;
-      this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL CACHES SECURED', 5200);
-      this.ui.feed('All caches secured. Extraction gate is live at the plaza.', 'ok', 'EXTRACT');
-      this.ui.toast('Extraction unlocked — get to the plaza.', 'ok', 4000);
+      if (this.mission.mode === 'vehicle') {
+        this.ui.showMissionBanner('EXFIL READY', 'BRING THE MARKED CAR INTO THE RING', 'ALL CACHES SECURED', 5200);
+        this.ui.feed('Caches secured. Drive the marked car into the exfil ring.', 'ok', 'EXFIL');
+        this.ui.toast('Exfil unlocked — get to the marked car.', 'ok', 4000);
+      } else {
+        this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL CACHES SECURED', 5200);
+        this.ui.feed('All caches secured. Extraction gate is live at the plaza.', 'ok', 'EXTRACT');
+        this.ui.toast('Extraction unlocked — get to the plaza.', 'ok', 4000);
+      }
     }
     this.sendFullState(true);
   }
@@ -1813,8 +1929,13 @@ export class NightfallGame {
     if (this.mission && this.mission.shards.every((s) => s.collected)) {
       this.world.extractionGroup.visible = true;
       if (!this.isHost) {
-        this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL CACHES SECURED', 5200);
-        this.ui.feed('All caches secured. Extraction gate is live at the plaza.', 'ok', 'EXTRACT');
+        if (this.mission.mode === 'vehicle') {
+          this.ui.showMissionBanner('EXFIL READY', 'BRING THE MARKED CAR INTO THE RING', 'ALL CACHES SECURED', 5200);
+          this.ui.feed('Caches secured. Drive the marked car into the exfil ring.', 'ok', 'EXFIL');
+        } else {
+          this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL CACHES SECURED', 5200);
+          this.ui.feed('All caches secured. Extraction gate is live at the plaza.', 'ok', 'EXTRACT');
+        }
       }
     }
   }
@@ -2271,7 +2392,16 @@ export class NightfallGame {
     this.audio.explosion();
     this.scene.remove(enemy.group);
     this.scene.remove(enemy.shadow);
-    if (this.mission) this.mission.score += 250;
+    if (this.mission) {
+      this.mission.score += 250;
+      if (this.mission.mode === 'purge' && this.mission.phase === 'collect') {
+        this.mission.kills += 1;
+        if (this.mission.kills === this.mission.requiredKills) {
+          this.ui.showMissionBanner('LOTS UNLOCKED', 'RAID THE AUCTION FLOOR', 'SECURITY DOWN', 3400);
+          this.ui.toast('Auction lots unlocked.', 'ok', 3200);
+        }
+      }
+    }
     this.ui.feed(`Security unit neutralized by ${(byName || 'ALLY').toUpperCase()}.`, 'ok', 'COMBAT');
     this.network?.send('enemy-dead', {
       id: enemy.id,
@@ -2452,6 +2582,14 @@ export class NightfallGame {
     };
     this.syncShardVisuals();
     this.applyStateCars(msg.cars);
+    if (this.mission.mode === 'vehicle') {
+      const car = this.cars.find((c) => c.id === this.mission.extractCarId);
+      if (car) {
+        this.mission.extraction.x = car.x;
+        this.mission.extraction.z = car.z;
+      }
+    }
+    this.world.extractionGroup.position.set(this.mission.extraction.x, 0.16, this.mission.extraction.z);
     this.syncRemoteEnemies(msg.enemies);
     this.alertCount = msg.alert ?? this.remoteAlertCount ?? 0;
     const phase = this.mission.phase;
@@ -2504,7 +2642,14 @@ export class NightfallGame {
       );
     }
     if (previousPhase !== phase && phase === 'extract') {
-      this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL CACHES SECURED', 5200);
+      if (this.mission.mode === 'vehicle') {
+        this.ui.showMissionBanner('EXFIL READY', 'BRING THE MARKED CAR INTO THE RING', 'ALL CACHES SECURED', 5200);
+      } else {
+        this.ui.showMissionBanner('EXTRACTION READY', 'RETURN TO THE PLAZA AS A TEAM', 'ALL CACHES SECURED', 5200);
+      }
+    }
+    if (previousPhase === 'sweep' && phase === 'collect') {
+      this.ui.showMissionBanner('SWEEP CLEARED', 'BREACH THE CACHES', 'ZERO HOUR', 3600);
     }
   }
 
@@ -2516,7 +2661,22 @@ export class NightfallGame {
     this.network.send('state', {
       mission: {
         phase: this.mission.phase,
-        shards: this.mission.shards.map((s) => ({ id: s.id, x: s.x, z: s.z, name: s.name, collected: s.collected })),
+        shards: this.mission.shards.map((s) => ({
+          id: s.id,
+          x: s.x,
+          z: s.z,
+          name: s.name,
+          order: s.order,
+          progress: s.progress || 0,
+          collected: s.collected,
+        })),
+        mode: this.mission.mode,
+        breached: this.mission.breached,
+        kills: this.mission.kills,
+        requiredKills: this.mission.requiredKills,
+        sweepRemaining: this.mission.sweepRemaining,
+        hackSeconds: this.mission.hackSeconds,
+        extractCarId: this.mission.extractCarId,
         elapsed: this.mission.elapsed,
         score: this.mission.score,
         extraction: { x: this.mission.extraction.x, z: this.mission.extraction.z },
@@ -2904,10 +3064,17 @@ export class NightfallGame {
     if (this.mission) {
       for (const shard of this.mission.shards) {
         if (shard.collected) continue;
+        const markerLabel = {
+          sequence: `GRID NODE ${(shard.order ?? 0) + 1}`,
+          vehicle: 'EXEC CACHE',
+          purge: 'AUCTION LOT',
+          sweep: 'SWEEP CACHE',
+          hack: `RELAY ${Math.round((shard.progress || 0) * 100)}%`,
+        }[this.mission.mode] || 'DATA CACHE';
         markers.push({
           id: `shard-${shard.id}`,
           position: new THREE.Vector3(shard.x, 2.2, shard.z),
-          label: 'DATA CACHE',
+          label: markerLabel,
           className: 'world-marker--cache',
         });
       }
@@ -2961,6 +3128,7 @@ export class NightfallGame {
       let best = Infinity;
       for (const shard of this.mission.shards) {
         if (shard.collected) continue;
+        if (this.mission.mode === 'sequence' && shard.order !== this.mission.breached) continue;
         best = Math.min(best, dist2D(this.player.pos.x, this.player.pos.z, shard.x, shard.z));
       }
       return best;

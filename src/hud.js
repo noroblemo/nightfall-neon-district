@@ -284,17 +284,46 @@ export class UI {
     if (!state) return;
     const contractName = state.contractName || 'GHOST PROTOCOL';
     const cacheCount = state.shards?.length || 3;
+    const mode = state.mode || 'collect';
+    const breached = state.breached || 0;
+    const kills = state.kills || 0;
+    const requiredKills = state.requiredKills || 0;
+    const collected = state.shards?.filter((s) => s.collected).length || 0;
     let title = contractName;
     let objective = `Breach ${cacheCount} data caches across the district.`;
     let eyebrow = state.contractTotal
       ? `CONTRACT ${String((state.contractIndex || 0) + 1).padStart(2, '0')}/${String(state.contractTotal).padStart(2, '0')}`
       : 'ACTIVE CONTRACT';
-    if (state.phase === 'extract') {
-      objective = 'All caches secured. Return to the plaza for extraction.';
-      eyebrow = 'EXTRACTION READY';
+    if (state.phase === 'sweep') {
+      objective = `Survive the security sweep — ${Math.ceil(state.sweepRemaining || 0)}s remaining.`;
+      eyebrow = 'SECURITY SWEEP';
+    } else if (state.phase === 'collect') {
+      if (mode === 'sequence') {
+        const next = state.shards?.find((s) => s.order === breached && !s.collected);
+        objective = `Cut grid node ${breached + 1}/${cacheCount}${next ? `: ${next.name}` : ''}. Order matters.`;
+      } else if (mode === 'purge') {
+        objective = requiredKills > kills
+          ? `Neutralize ${requiredKills - kills} more security units, then raid ${cacheCount} lots.`
+          : `Security down. Raid ${cacheCount} auction lots.`;
+      } else if (mode === 'sweep') {
+        objective = `Sweep cleared. Breach ${cacheCount} caches before the net resets.`;
+      } else if (mode === 'hack') {
+        const active = state.shards?.find((s) => !s.collected);
+        const progress = active ? Math.round((active.progress || 0) * 100) : 100;
+        objective = `Hold inside the signal relays — ${collected}/${cacheCount} uploaded. Active: ${progress}%.`;
+      } else if (mode === 'vehicle') {
+        objective = `Lift ${cacheCount} executive caches, then exfil by marked car.`;
+      }
+    } else if (state.phase === 'extract') {
+      objective = mode === 'vehicle'
+        ? 'All caches secured. Bring the marked car into the exfil ring.'
+        : 'All caches secured. Return to the plaza for extraction.';
+      eyebrow = mode === 'vehicle' ? 'EXFIL READY' : 'EXTRACTION READY';
     } else if (state.phase === 'extracting') {
-      objective = 'Hold the extraction zone — stay inside the ring.';
-      eyebrow = 'EXTRACTION IN PROGRESS';
+      objective = mode === 'vehicle'
+        ? 'Hold the exfil ring — keep the marked car inside.'
+        : 'Hold the extraction zone — stay inside the ring.';
+      eyebrow = mode === 'vehicle' ? 'EXFIL IN PROGRESS' : 'EXTRACTION IN PROGRESS';
     } else if (state.phase === 'complete') {
       objective = 'Contract complete. The district is yours.';
       eyebrow = 'CONTRACT COMPLETE';
