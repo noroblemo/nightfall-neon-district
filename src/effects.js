@@ -21,6 +21,7 @@ export class Effects {
     geo.setAttribute('aSize', new THREE.BufferAttribute(this.particleSizes, 1));
     geo.setAttribute('aAlpha', new THREE.BufferAttribute(this.particleAlphas, 1));
     for (const attr of Object.values(geo.attributes)) attr.setUsage(THREE.DynamicDrawUsage);
+    geo.setDrawRange(0, 0);
     this.activeParticles = 0;
     this.particleUploadPending = true;
     this.particleGeo = geo;
@@ -403,7 +404,7 @@ export class Effects {
   }
 
   update(dt) {
-    const hadParticles = this.activeParticles > 0;
+    let maxLive = -1;
     for (let i = 0; i < MAX_PARTICLES; i += 1) {
       const p = this.particles[i];
       if (!p.alive) continue;
@@ -438,12 +439,26 @@ export class Effects {
       this.particleColors[i * 3 + 2] = p.b;
       this.particleSizes[i] = size;
       this.particleAlphas[i] = alpha;
+      maxLive = i;
     }
-    if (this.activeParticles > 0 || hadParticles || this.particleUploadPending) {
-      this.particleGeo.attributes.position.needsUpdate = true;
-      this.particleGeo.attributes.aColor.needsUpdate = true;
-      this.particleGeo.attributes.aSize.needsUpdate = true;
-      this.particleGeo.attributes.aAlpha.needsUpdate = true;
+    // Only draw and upload the live prefix instead of the whole 900-particle
+    // pool. A six-spark muzzle flash now touches six entries, not 900.
+    const uploadCount = maxLive + 1;
+    this.particleGeo.setDrawRange(0, Math.max(0, uploadCount));
+    if (uploadCount > 0 && (this.activeParticles > 0 || this.particleUploadPending)) {
+      const { position, aColor, aSize, aAlpha } = this.particleGeo.attributes;
+      position.clearUpdateRanges();
+      position.addUpdateRange(0, uploadCount * 3);
+      aColor.clearUpdateRanges();
+      aColor.addUpdateRange(0, uploadCount * 3);
+      aSize.clearUpdateRanges();
+      aSize.addUpdateRange(0, uploadCount);
+      aAlpha.clearUpdateRanges();
+      aAlpha.addUpdateRange(0, uploadCount);
+      position.needsUpdate = true;
+      aColor.needsUpdate = true;
+      aSize.needsUpdate = true;
+      aAlpha.needsUpdate = true;
       this.particleUploadPending = false;
     }
 

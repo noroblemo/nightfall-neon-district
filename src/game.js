@@ -24,6 +24,7 @@ import {
 
 const SENS_KEY = 'nightfall:sensitivity';
 const QUALITY_KEY = 'nightfall:quality';
+const QUALITY_KEYS = new Set(['performance', 'balanced', 'cinematic']);
 const NAME_KEY = 'nightfall:name';
 const MUTE_KEY = 'nightfall:muted';
 const VARIANT_KEY = 'nightfall:variant';
@@ -39,6 +40,10 @@ const DRY_FIRE_INTERVAL = 0.32;
 const RELOAD_SECONDS = 1.05;
 const RECOIL_MAX = 0.045;
 const PLAZA_SAFE_RADIUS = 30;
+// One range for the on-foot prompt and host validation, so a cache cannot be
+// breached from a distance where no interaction is shown.
+const SHARD_RANGE = 4.8;
+const SHARD_VEHICLE_RANGE = 6.4;
 
 // Optional activities live outside the nine-contract ladder. Both gates sit
 // beside the parked vehicles by the plaza so they are visible from spawn.
@@ -282,8 +287,14 @@ export class NightfallGame {
     this.effects = effects;
     this.audio = audio;
     // Keep storm audio locked to the visible lightning rather than a second,
-    // independent timer. Weather itself stays host-authoritative.
-    this.world.onLightning = () => this.audio.thunder?.();
+    // independent timer. The host owns the timer and broadcasts each strike so
+    // guests flash and thunder at the same moment.
+    this.world.onLightning = () => {
+      this.audio.thunder?.();
+      if (this.isHost && this.session?.online) {
+        this.network?.send('weather-strike', { weather: this.world.weather.kind });
+      }
+    };
     this.setQualityCallback = setQuality || (() => {});
     this.canvas = renderer.domElement;
 
@@ -318,7 +329,8 @@ export class NightfallGame {
     this.drivePitch = 0.26;
     this.lastLookMove = 0;
     this.lookSensitivity = Number(readStorage(SENS_KEY, '1')) || 1;
-    this.quality = readStorage(QUALITY_KEY, 'balanced');
+    const storedQuality = readStorage(QUALITY_KEY, 'balanced');
+    this.quality = QUALITY_KEYS.has(storedQuality) ? storedQuality : 'balanced';
     this.name = readStorage(NAME_KEY, 'GHOST') || 'GHOST';
     this.myColor = 0x36ecff;
     this.myName = this.name;
@@ -570,9 +582,10 @@ export class NightfallGame {
   }
 
   applyQuality(quality) {
-    this.quality = quality;
-    writeStorage(QUALITY_KEY, quality);
-    this.setQualityCallback(quality);
+    const key = QUALITY_KEYS.has(quality) ? quality : 'balanced';
+    this.quality = key;
+    writeStorage(QUALITY_KEY, key);
+    this.setQualityCallback(key);
     this.updateQualityButtons();
   }
 
@@ -1433,8 +1446,16 @@ export class NightfallGame {
     return best;
   }
 
+  sendActivityResponse(to, accepted, reason = '', kind = null, label = '') {
+    this.network?.send('activity-response', { to, accepted, reason, kind, label });
+  }
+
   requestActivity(kind = null) {
     if (!this.session || !this.player?.alive || this.status !== 'playing') return;
+    if (this.currentMode === 'car') {
+      this.ui.toast('Exit the vehicle before starting a race.', 'warn', 2200);
+      return;
+    }
     if (this.activity?.phase === 'running') {
       this.ui.toast('A race is already live. Finish it before starting another.', 'info', 2200);
       return;
@@ -1458,24 +1479,38 @@ export class NightfallGame {
     if (!this.isHost) return;
     const station = ACTIVITY_STATIONS.find((s) => s.kind === msg.kind);
     const remote = this.remotePlayers.get(msg.from);
-    if (!station || !remote?.alive) return;
-    if (dist2D(remote.pos.x, remote.pos.z, station.x, station.z) > 8.5) return;
-    this.startActivity(station.kind, msg.from);
+    const reject = (reason) => this.sendActivityResponse(msg.from, false, reason, msg.kind);
+    if (!station) {
+      reject('Unknown race gate.');
+      return;
+    }
+    if (!remote?.alive) {
+      reject('You must be alive to start a race.');
+      return;
+    }
+    if (remote.inCar || remote.carId) {
+      reject('Exit your vehicle before starting a race.');
+      return;
+    }
+    if (dist2D(remote.pos.x, remote.pos.z, station.x, station.z) > 8.5) {
+      reject('Move to the race gate to start it.');
+      return;
+    }
+    this.startActivity(station.kind, msg.from, msg.from);
   }
 
-  startActivity(kind, racerId = this.session?.selfId || 'solo') {
-    if (!this.isHost || !this.player?.alive || this.status !== 'playing') return;
-    if (this.activity?.phase === 'running') {
-      this.ui.toast('A race is already live.', 'info', 2000);
-      return;
-    }
+  startActivity(kind, racerId = this.session?.selfId || 'solo', respondTo = null) {
+    const fail = (reason) => {
+      if (respondTo) this.sendActivityResponse(respondTo, false, reason, kind);
+      else this.ui.toast(reason, 'warn', 2600);
+      return false;
+    };
+    if (!this.isHost || !this.player?.alive || this.status !== 'playing') return fail('Host is unavailable.');
+    if (this.activity?.phase === 'running') return fail('A race is already live.');
     const station = ACTIVITY_STATIONS.find((s) => s.kind === kind);
-    if (!station) return;
+    if (!station) return fail('Unknown race gate.');
     const vehicle = this.findRaceVehicle(kind, station, racerId);
-    if (!vehicle) {
-      this.ui.toast(`No ${kind === 'bike' ? 'light cycle' : 'car'} is parked at that gate.`, 'warn', 2400);
-      return;
-    }
+    if (!vehicle) return fail(`No ${kind === 'bike' ? 'light cycle' : 'car'} is parked at that gate.`);
     const routes = RACE_ROUTES[kind] || [];
     const route = routes[Math.floor(Math.random() * routes.length)] || [];
     const isBike = kind === 'bike';
@@ -1506,10 +1541,11 @@ export class NightfallGame {
     this.rebuildRaceVisuals();
     // State first: the guest must know the race id before the mount command.
     this.sendFullState(true);
+    if (respondTo) this.sendActivityResponse(respondTo, true, '', kind, station.label);
     if (racerId === (this.session?.selfId || 'solo')) {
       this.enterCar(vehicle);
     } else {
-      vehicle.occupiedBy = racerId;
+      // Do not mark occupancy until the rider acknowledges the mount.
       this.network?.send('activity-enter', {
         vehicleId: vehicle.id,
         raceId: this.activity.id,
@@ -1528,13 +1564,47 @@ export class NightfallGame {
       'ACTIVITY',
     );
     this.audio.pickup();
+    return true;
   }
 
   handleActivityEnter(msg) {
     if (this.isHost || !this.activity || msg.raceId !== this.activity.id) return;
     if (msg.racerId !== (this.session?.selfId || 'solo')) return;
     const car = this.cars.find((c) => c.id === msg.vehicleId);
-    if (car && car.kind === this.activity.kind && this.currentMode !== 'car') this.enterCar(car);
+    const mounted = car && car.kind === this.activity.kind
+      && this.currentMode !== 'car' && this.player?.alive;
+    if (mounted) this.enterCar(car);
+    this.network?.send('activity-mounted', {
+      raceId: this.activity.id,
+      vehicleId: msg.vehicleId,
+      racerId: msg.racerId,
+      failed: !mounted,
+    });
+  }
+
+  handleActivityMounted(msg) {
+    if (!this.isHost || !this.activity || msg.raceId !== this.activity.id) return;
+    if (msg.failed || msg.racerId !== this.activity.racerId) {
+      this.failActivity('RIDER NOT MOUNTED');
+      return;
+    }
+    const car = this.cars.find((c) => c.id === msg.vehicleId);
+    if (car && this.remotePlayers.has(msg.racerId)) car.occupiedBy = msg.racerId;
+  }
+
+  handleActivityResponse(msg) {
+    if (this.isHost) {
+      if (msg.accepted === false && this.activity?.racerId === msg.from) {
+        this.failActivity('RIDER NOT MOUNTED');
+      }
+      return;
+    }
+    if (msg.to && msg.to !== (this.session?.selfId || 'solo')) return;
+    if (msg.accepted) {
+      this.ui.toast(`${msg.label || 'Race'} accepted — mount the waiting vehicle.`, 'ok', 2400);
+    } else {
+      this.ui.toast(msg.reason || 'The host declined that race request.', 'warn', 3000);
+    }
   }
 
   updateActivity(dt) {
@@ -1557,10 +1627,14 @@ export class NightfallGame {
     activity.timeRemaining = Math.max(0, (activity.timeRemaining ?? activity.timeLimit) - dt);
     const racers = [];
     const selfId = this.session?.selfId || 'solo';
-    if (this.player?.alive && this.currentMode === 'car' && this.localCar?.kind === activity.kind) {
+    const racerId = activity.racerId || selfId;
+    if (racerId === selfId && this.player?.alive && this.currentMode === 'car' && this.localCar?.kind === activity.kind) {
       racers.push({ id: selfId, name: this.myName, pos: this.player.pos });
     }
     for (const remote of this.remotePlayers.values()) {
+      // Only the assigned rider can clear gates; otherwise any passing car
+      // could win the race and collect its reward.
+      if (remote.id !== racerId) continue;
       if (remote.alive && remote.inCar && remote.vehicleKind === activity.kind) {
         racers.push({ id: remote.id, name: remote.name, pos: remote.pos });
       }
@@ -2049,13 +2123,13 @@ export class NightfallGame {
     return best;
   }
 
-  nearestShard(maxDistance = 4.3) {
+  nearestShard(maxDistance = SHARD_RANGE) {
     if (!this.mission || this.mission.phase !== 'collect') return null;
     const mode = this.mission.mode;
     const ordered = mode === 'sequence' || mode === 'circuit' || mode === 'courier';
     if (mode === 'circuit' && this.currentMode !== 'car') return null;
     if (mode === 'hunt' && this.mission.kills < (this.mission.requiredKills || 0)) return null;
-    const range = mode === 'circuit' ? Math.max(maxDistance, 6.4) : maxDistance;
+    const range = mode === 'circuit' ? Math.max(maxDistance, SHARD_VEHICLE_RANGE) : maxDistance;
     let best = null;
     let bestDistance = range;
     for (const shard of this.mission.shards) {
@@ -2091,7 +2165,7 @@ export class NightfallGame {
       this.vehicleInteract();
       return;
     }
-    const shard = this.nearestShard(4.8);
+    const shard = this.nearestShard(SHARD_RANGE);
     if (shard) {
       if (this.mission?.mode === 'hack') {
         this.ui.toast('Upload in progress — stay inside the relay.', 'info', 1600);
@@ -2199,7 +2273,10 @@ export class NightfallGame {
     for (const car of this.cars) {
       if (car === this.localCar) continue;
       const remote = car.occupiedBy ? this.remotePlayers.get(car.occupiedBy) : null;
-      if (remote) {
+      // A race assignment is only real once the rider's player-state reports
+      // that exact vehicle. Never let a stale occupancy teleport a car.
+      if (car.occupiedBy && (!remote || remote.carId !== car.id)) car.occupiedBy = null;
+      if (car.occupiedBy && remote) {
         car.x = remote.pos.x;
         car.z = remote.pos.z;
         car.yaw = remote.bodyYaw;
@@ -2345,12 +2422,17 @@ export class NightfallGame {
       this.ui.setInteraction(`RACE LIVE — GATE ${this.activity.next + 1}/${this.activity.checkpoints.length}`, true, 'G');
       return;
     }
+    const car = this.nearestCar();
     const station = this.nearestActivityStation(this.player.pos, 6.8);
+    if (station && car && car.kind === station.kind) {
+      this.ui.setInteraction(`ENTER VEHICLE / START ${station.label}`, true, 'F·G');
+      return;
+    }
     if (station) {
       this.ui.setInteraction(`START ${station.label}`, true, 'G');
       return;
     }
-    const shard = this.nearestShard(4.8);
+    const shard = this.nearestShard(SHARD_RANGE);
     if (shard) {
       const verb = {
         collect: 'BREACH DATA CACHE',
@@ -2366,7 +2448,6 @@ export class NightfallGame {
       this.ui.setInteraction(verb, true, this.mission?.mode === 'hack' ? '◆' : 'E');
       return;
     }
-    const car = this.nearestCar();
     if (car) {
       this.ui.setInteraction('ENTER VEHICLE', true, 'F');
       return;
@@ -2654,7 +2735,7 @@ export class NightfallGame {
     if (mission.requiredKills && mission.kills < mission.requiredKills) {
       return `Neutralize ${mission.requiredKills - mission.kills} more security units.`;
     }
-    const range = mission.requireVehicle ? 7 : 6.6;
+    const range = mission.requireVehicle ? SHARD_VEHICLE_RANGE : SHARD_RANGE;
     if (dist2D(collector.pos.x, collector.pos.z, shard.x, shard.z) > range) return 'Get closer to the cache.';
     return null;
   }
@@ -3777,6 +3858,9 @@ export class NightfallGame {
     if (this.isHost) {
       const previousCar = remote.carId;
       remote.carId = msg.carId || null;
+      for (const car of this.cars) {
+        if (car.occupiedBy === remote.id && car.id !== remote.carId) car.occupiedBy = null;
+      }
       if (previousCar && previousCar !== remote.carId) {
         const car = this.cars.find((c) => c.id === previousCar);
         if (car && car.occupiedBy === remote.id) car.occupiedBy = null;
@@ -3807,6 +3891,12 @@ export class NightfallGame {
       case 'weather':
         if (!this.isHost && msg.from === this.session.hostId && msg.weather) this.applyWeather(msg.weather, true);
         break;
+      case 'weather-strike':
+        if (!this.isHost && msg.from === this.session.hostId) {
+          this.world.triggerLightning?.(true);
+          this.audio.thunder?.();
+        }
+        break;
       case 'weather-request':
         if (this.isHost && msg.weather) {
           const preset = this.world.getWeatherPreset(msg.weather);
@@ -3827,6 +3917,12 @@ export class NightfallGame {
         break;
       case 'activity-enter':
         if (!this.isHost && msg.from === this.session.hostId) this.handleActivityEnter(msg);
+        break;
+      case 'activity-mounted':
+        if (this.isHost) this.handleActivityMounted(msg);
+        break;
+      case 'activity-response':
+        this.handleActivityResponse(msg);
         break;
       case 'shot':
         if (this.isHost) this.handleRemoteShot(msg);
@@ -3919,7 +4015,9 @@ export class NightfallGame {
     const to = new THREE.Vector3(enemy.x, enemy.type === 'drone' ? enemy.y : 1.1, enemy.z);
     if (this.isShotBlocked(from, to)) return;
     this.effects.tracer(from, to, 0xfff1c9);
-    this.applyEnemyDamage(enemy, this.weaponDamage, this.remotePlayers.get(msg.from)?.name || 'ALLY');
+    // Remote shots use the base weapon damage. The host's FIREPOWER upgrade
+    // must never inflate or nerf a guest's bullets.
+    this.applyEnemyDamage(enemy, WEAPON_DAMAGE, this.remotePlayers.get(msg.from)?.name || 'ALLY');
   }
 
   handleEnemyShot(msg) {
@@ -4278,6 +4376,7 @@ export class NightfallGame {
     }
     if (this.status === 'disconnected') return;
 
+    this.world.lightningAuthority = this.isHost || !this.session.online;
     const frozen = (this.paused || this.chatOpen) && !this.session.online;
     if (frozen) {
       this.updateCamera(dt, elapsed);

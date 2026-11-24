@@ -170,26 +170,47 @@ export function circleOrientedBoxResolve(pos, radius, box) {
 }
 
 export function segmentBoxHit(start, end, box, pad = 0) {
-  // 2D slab test on XZ, returns hit distance fraction or null.
+  // 2D slab test on XZ, returns hit distance fraction or null. This runs for
+  // every collider in several per-frame scans, so avoid all allocations.
   let tmin = 0;
   let tmax = 1;
-  const d = { x: end.x - start.x, z: end.z - start.z };
-  const mins = { x: box.minX - pad, z: box.minZ - pad };
-  const maxs = { x: box.maxX + pad, z: box.maxZ + pad };
-  for (const axis of ['x', 'z']) {
-    const min = mins[axis];
-    const max = maxs[axis];
-    if (Math.abs(d[axis]) < 1e-8) {
-      if (start[axis] < min || start[axis] > max) return null;
-    } else {
-      let t1 = (min - start[axis]) / d[axis];
-      let t2 = (max - start[axis]) / d[axis];
-      if (t1 > t2) [t1, t2] = [t2, t1];
-      tmin = Math.max(tmin, t1);
-      tmax = Math.min(tmax, t2);
-      if (tmin > tmax) return null;
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const minX = box.minX - pad;
+  const maxX = box.maxX + pad;
+  const minZ = box.minZ - pad;
+  const maxZ = box.maxZ + pad;
+
+  if (Math.abs(dx) < 1e-8) {
+    if (start.x < minX || start.x > maxX) return null;
+  } else {
+    let t1 = (minX - start.x) / dx;
+    let t2 = (maxX - start.x) / dx;
+    if (t1 > t2) {
+      const swap = t1;
+      t1 = t2;
+      t2 = swap;
     }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return null;
   }
+
+  if (Math.abs(dz) < 1e-8) {
+    if (start.z < minZ || start.z > maxZ) return null;
+  } else {
+    let t1 = (minZ - start.z) / dz;
+    let t2 = (maxZ - start.z) / dz;
+    if (t1 > t2) {
+      const swap = t1;
+      t1 = t2;
+      t2 = swap;
+    }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return null;
+  }
+
   return tmin;
 }
 

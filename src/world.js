@@ -307,13 +307,15 @@ export function createWorld(scene, renderer) {
 
   const sky = buildSky(scene);
 
-  // Environment reflection map for wet streets and car paint.
+  // Environment reflection map for wet streets and car paint. Lower tiers can
+  // drop the map entirely, which removes an env lookup from every lit shader.
+  let environmentTexture = null;
   try {
     const envTex = createEnvironmentTexture();
     const pmrem = new THREE.PMREMGenerator(renderer);
     pmrem.compileEquirectangularShader();
-    const env = pmrem.fromEquirectangular(envTex).texture;
-    scene.environment = env;
+    environmentTexture = pmrem.fromEquirectangular(envTex).texture;
+    scene.environment = environmentTexture;
     scene.environmentIntensity = 0.65;
     envTex.dispose();
     pmrem.dispose();
@@ -1613,6 +1615,12 @@ export function createWorld(scene, renderer) {
     return preset;
   }
 
+  function triggerLightning(silent = false) {
+    weather.flash = 1;
+    weather.nextStrike = 3.5 + Math.random() * 7;
+    if (!silent) state.onLightning?.();
+  }
+
   const state = {
     colliders,
     shardSites,
@@ -1636,6 +1644,9 @@ export function createWorld(scene, renderer) {
     weather,
     weatherList: WEATHERS,
     onLightning: null,
+    // The host owns lightning timing so guests see the same flash/thunder.
+    lightningAuthority: true,
+    triggerLightning,
     setWeather,
     getWeatherPreset: getWeather,
     elapsed: 0,
@@ -1643,6 +1654,12 @@ export function createWorld(scene, renderer) {
     low: false,
     update,
   };
+
+  // Traffic and pedestrian matrices do not need 60 Hz uploads; they move far
+  // enough from the camera that 30 Hz is visually identical.
+  const INSTANCE_INTERVAL = 1 / 30;
+  let instanceAccumulator = 0;
+  let lastWeatherFraction = -1;
 
   function update(dt, elapsed, playerPos, cameraPos) {
     state.elapsed = elapsed;
@@ -1665,13 +1682,9 @@ export function createWorld(scene, renderer) {
     sky.moon.material.opacity = clamp(weather.moon, 0.05, 1);
     sky.moonCore.material.opacity = clamp(weather.moon * 0.95, 0.05, 1);
 
-    if (preset.lightning) {
+    if (preset.lightning && state.lightningAuthority) {
       weather.nextStrike -= dt;
-      if (weather.nextStrike <= 0) {
-        weather.flash = 1;
-        weather.nextStrike = 3.5 + Math.random() * 7;
-        state.onLightning?.();
-      }
+      if (weather.nextStrike <= 0) triggerLightning();
     }
     weather.flash = Math.max(0, weather.flash - dt * 2.6);
     const flicker = weather.flash * (0.55 + 0.45 * Math.sin(elapsed * 47));
@@ -1679,16 +1692,36 @@ export function createWorld(scene, renderer) {
     moonLight.intensity = weather.moonlight + flicker * 1.8;
     sky.skyMat.uniforms.uFlash.value = flicker;
 
+    // Quality tiers must reduce actual work, not just bloom strength.
+    const weatherFraction = clamp(state.quality, 0, 1);
+    const fullLighting = state.quality >= 1 && !state.low;
+    plazaLightA.visible = fullLighting;
+    plazaLightB.visible = fullLighting;
+    warmLight.visible = fullLighting;
+    spireLight.visible = state.quality >= 0.7;
+    const wantEnvironment = state.quality >= 0.7 && !!environmentTexture;
+    if ((scene.environment !== null) !== wantEnvironment) {
+      scene.environment = wantEnvironment ? environmentTexture : null;
+    }
+    scene.environmentIntensity = wantEnvironment ? (fullLighting ? 0.65 : 0.42) : 0;
+
+    if (weatherFraction !== lastWeatherFraction) {
+      const rainVertices = Math.max(0, Math.floor(rainCount * weatherFraction) * 2);
+      const snowPoints = Math.max(0, Math.floor(snowCount * weatherFraction));
+      rain.geometry.setDrawRange(0, rainVertices);
+      snow.geometry.setDrawRange(0, snowPoints);
+      lastWeatherFraction = weatherFraction;
+    }
     rainMat.uniforms.uTime.value = elapsed;
     rainMat.uniforms.uAlpha.value = weather.rainAmount;
     rain.position.x = playerPos.x;
     rain.position.z = playerPos.z;
-    rain.visible = !!state.quality && weather.rainAmount > 0.02;
+    rain.visible = weatherFraction > 0 && weather.rainAmount > 0.02;
     snowMat.uniforms.uTime.value = elapsed;
     snowMat.uniforms.uAlpha.value = weather.snowAmount;
     snow.position.x = playerPos.x;
     snow.position.z = playerPos.z;
-    snow.visible = !!state.quality && weather.snowAmount > 0.02;
+    snow.visible = weatherFraction > 0 && weather.snowAmount > 0.02;
     const intensity = state.low ? 0.55 : 1;
     lampGlow.material.opacity = 0.6 * intensity;
     searchlights.children.forEach((beam, i) => {
@@ -1723,69 +1756,75 @@ export function createWorld(scene, renderer) {
       if (s.broken && Math.sin(elapsed * 21 + s.phase) > 0.92) s.mesh.material.opacity *= 0.15;
     });
 
-    // Traffic
-    for (let i = 0; i < traffic.length; i += 1) {
-      const car = traffic[i];
-      let speed = car.speed;
-      // Brake for the player when directly ahead.
-      if (playerPos) {
-        let ahead = 0;
-        if (car.axis === 'x') {
-          ahead = (playerPos.x - car.t) * car.dir;
-          if (ahead > 0 && ahead < 13 && Math.abs(playerPos.z - (car.line + car.lane)) < 4.5) speed = 0;
-        } else {
-          ahead = (playerPos.z - car.t) * car.dir;
-          if (ahead > 0 && ahead < 13 && Math.abs(playerPos.x - (car.line + car.lane)) < 4.5) speed = 0;
-        }
-      }
-      car.t += speed * car.dir * dt;
-      if (car.t > trafficLimit) car.t = -trafficLimit;
-      if (car.t < -trafficLimit) car.t = trafficLimit;
-      if (car.axis === 'x') {
-        car.x = car.t;
-        car.z = car.line + car.lane;
-      } else {
-        car.x = car.line + car.lane;
-        car.z = car.t;
-      }
-      placeTrafficPart(trafficParts.body, i, car, 0, 0.62, 0);
-      placeTrafficPart(trafficParts.cabin, i, car, 0, 1.05, -0.2);
-      let wheelIndex = i * 4;
-      for (const [wx, wz] of [[-0.92, 1.35], [0.92, 1.35], [-0.92, -1.35], [0.92, -1.35]]) {
-        placeTrafficPart(trafficParts.wheels, wheelIndex, car, wx, 0.34, wz);
-        wheelIndex += 1;
-      }
-      placeTrafficPart(trafficParts.heads, i * 2, car, -0.62, 0.68, 2.11);
-      placeTrafficPart(trafficParts.heads, i * 2 + 1, car, 0.62, 0.68, 2.11);
-      placeTrafficPart(trafficParts.tails, i, car, 0, 0.68, -2.11);
-    }
-    for (const mesh of Object.values(trafficParts)) mesh.instanceMatrix.needsUpdate = true;
+    instanceAccumulator += dt;
+    if (instanceAccumulator >= INSTANCE_INTERVAL) {
+      const instanceDt = instanceAccumulator;
+      instanceAccumulator = 0;
 
-    // Pedestrians
-    for (let i = 0; i < pedestrians.length; i += 1) {
-      const p = pedestrians[i];
-      p.angle += (p.speed / p.radius) * dt;
-      const x = p.cx + Math.cos(p.angle) * p.radius;
-      const z = p.cz + Math.sin(p.angle) * p.radius;
-      const bob = Math.sin(p.angle * 10 + p.phase) * 0.035;
-      dummy.position.set(x, 0.2 + bob, z);
-      dummy.rotation.set(0, -p.angle + (p.speed > 0 ? Math.PI / 2 : -Math.PI / 2), 0);
-      dummy.scale.setScalar(p.scale);
-      dummy.updateMatrix();
-      pedBody.setMatrixAt(i, dummy.matrix);
-      dummy.position.y = 1.86 * p.scale + bob;
-      dummy.scale.setScalar(p.scale);
-      dummy.updateMatrix();
-      pedHead.setMatrixAt(i, dummy.matrix);
-      dummy.position.set(x, (p.umbrella ? 2.45 : 0) * p.scale + bob, z);
-      dummy.rotation.set(p.umbrella ? 0.12 : 0, 0, p.umbrella ? 0.1 : 0);
-      dummy.scale.setScalar(p.scale);
-      dummy.updateMatrix();
-      umbMesh.setMatrixAt(i, dummy.matrix);
+      // Traffic
+      for (let i = 0; i < traffic.length; i += 1) {
+        const car = traffic[i];
+        let speed = car.speed;
+        // Brake for the player when directly ahead.
+        if (playerPos) {
+          let ahead = 0;
+          if (car.axis === 'x') {
+            ahead = (playerPos.x - car.t) * car.dir;
+            if (ahead > 0 && ahead < 13 && Math.abs(playerPos.z - (car.line + car.lane)) < 4.5) speed = 0;
+          } else {
+            ahead = (playerPos.z - car.t) * car.dir;
+            if (ahead > 0 && ahead < 13 && Math.abs(playerPos.x - (car.line + car.lane)) < 4.5) speed = 0;
+          }
+        }
+        car.t += speed * car.dir * instanceDt;
+        if (car.t > trafficLimit) car.t = -trafficLimit;
+        if (car.t < -trafficLimit) car.t = trafficLimit;
+        if (car.axis === 'x') {
+          car.x = car.t;
+          car.z = car.line + car.lane;
+        } else {
+          car.x = car.line + car.lane;
+          car.z = car.t;
+        }
+        placeTrafficPart(trafficParts.body, i, car, 0, 0.62, 0);
+        placeTrafficPart(trafficParts.cabin, i, car, 0, 1.05, -0.2);
+        let wheelIndex = i * 4;
+        for (const [wx, wz] of [[-0.92, 1.35], [0.92, 1.35], [-0.92, -1.35], [0.92, -1.35]]) {
+          placeTrafficPart(trafficParts.wheels, wheelIndex, car, wx, 0.34, wz);
+          wheelIndex += 1;
+        }
+        placeTrafficPart(trafficParts.heads, i * 2, car, -0.62, 0.68, 2.11);
+        placeTrafficPart(trafficParts.heads, i * 2 + 1, car, 0.62, 0.68, 2.11);
+        placeTrafficPart(trafficParts.tails, i, car, 0, 0.68, -2.11);
+      }
+      for (const mesh of Object.values(trafficParts)) mesh.instanceMatrix.needsUpdate = true;
+
+      // Pedestrians
+      for (let i = 0; i < pedestrians.length; i += 1) {
+        const p = pedestrians[i];
+        p.angle += (p.speed / p.radius) * instanceDt;
+        const x = p.cx + Math.cos(p.angle) * p.radius;
+        const z = p.cz + Math.sin(p.angle) * p.radius;
+        const bob = Math.sin(p.angle * 10 + p.phase) * 0.035;
+        dummy.position.set(x, 0.2 + bob, z);
+        dummy.rotation.set(0, -p.angle + (p.speed > 0 ? Math.PI / 2 : -Math.PI / 2), 0);
+        dummy.scale.setScalar(p.scale);
+        dummy.updateMatrix();
+        pedBody.setMatrixAt(i, dummy.matrix);
+        dummy.position.y = 1.86 * p.scale + bob;
+        dummy.scale.setScalar(p.scale);
+        dummy.updateMatrix();
+        pedHead.setMatrixAt(i, dummy.matrix);
+        dummy.position.set(x, (p.umbrella ? 2.45 : 0) * p.scale + bob, z);
+        dummy.rotation.set(p.umbrella ? 0.12 : 0, 0, p.umbrella ? 0.1 : 0);
+        dummy.scale.setScalar(p.scale);
+        dummy.updateMatrix();
+        umbMesh.setMatrixAt(i, dummy.matrix);
+      }
+      pedBody.instanceMatrix.needsUpdate = true;
+      pedHead.instanceMatrix.needsUpdate = true;
+      umbMesh.instanceMatrix.needsUpdate = true;
     }
-    pedBody.instanceMatrix.needsUpdate = true;
-    pedHead.instanceMatrix.needsUpdate = true;
-    umbMesh.instanceMatrix.needsUpdate = true;
   }
 
   return state;

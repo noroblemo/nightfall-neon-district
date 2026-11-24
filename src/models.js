@@ -143,10 +143,9 @@ function buildBlenderOperator({ color = 0x35e9ff, variant = 'male' } = {}) {
     group.add(flash);
   }
 
-  const fill = new THREE.PointLight(0x9fe2ff, 6.5, 5.2, 2);
-  fill.position.set(0, 2.35, -0.9);
-  group.add(fill);
-
+  // Character fill lights were removed: scene-global point lights multiply
+  // the shader cost of every lit material. Emissive accents keep operators
+  // readable without charging the whole city for each player.
   const mixer = new THREE.AnimationMixer(model);
   const actions = {};
   for (const clip of asset.animations) {
@@ -234,11 +233,11 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
   // without flattening the rounded forms into toy-like silhouettes.
   const lit = hostile
     ? { emissive: 0x2a1219, emissiveIntensity: 0.5 }
-    : { emissive: 0x1c2333, emissiveIntensity: 0.5 };
+    : { emissive: 0x1c2333, emissiveIntensity: 0.6 };
   const litPants = hostile
     ? { emissive: 0x160d11, emissiveIntensity: 0.45 }
-    : { emissive: 0x151a25, emissiveIntensity: 0.45 };
-  const litSkin = hostile ? {} : { emissive: skin, emissiveIntensity: 0.1 };
+    : { emissive: 0x151a25, emissiveIntensity: 0.55 };
+  const litSkin = hostile ? {} : { emissive: skin, emissiveIntensity: 0.14 };
   const jacket = suit || mat(hostile ? 0x2b2b36 : 0x3b4356, { roughness: 0.78, metalness: 0.16, ...lit });
   const armor = suit || mat(hostile ? 0x1c1d24 : 0x222834, { roughness: 0.5, metalness: 0.42 });
   const pants = suit || mat(hostile ? 0x1a1c22 : 0x2d3447, { roughness: 0.82, metalness: 0.08, ...litPants });
@@ -246,11 +245,6 @@ export function buildCharacter({ color = 0x35e9ff, skin = 0xd9ab8a, hostile = fa
   const accent = glowMat(hostile ? 0xff2c55 : color, 1);
   const visor = glowMat(hostile ? 0xff263f : color, 1);
   const skinMat = suit || mat(skin, { roughness: 0.86, metalness: 0, ...litSkin });
-  if (!hostile) {
-    const fill = new THREE.PointLight(0x9fe2ff, 6.5, 5.2, 2);
-    fill.position.set(0, 2.35, -0.9);
-    group.add(fill);
-  }
 
   const torso = new THREE.Group();
   torso.position.y = 1.0;

@@ -17,7 +17,7 @@ A browser-based co-op open-world action game with Forza-style arcade driving, bu
 - **Operator progression** — choose a male or female Blender-rigged operator on the landing screen or in Options, then spend credits earned from contracts on Vitality, Endurance, Firepower and Overdrive upgrades. Selections and upgrades persist locally and sync to co-op partners.
 - **Combat** — third-person over-shoulder shooting with tracers, hitmarkers, controlled recoil, tighter ADS accuracy, wall impacts and faster reloads. Larger magazines and recoverable reserves come from kills, caches, race gates and mission resets. Guards and scout drones use detection/leash AI.
 - **Online multiplayer** — room codes, up to 4 operatives per room on the WebSocket relay (2 on P2P fallback). Host-authoritative mission/enemy simulation with client prediction for movement.
-- **Performance** — instanced traffic and static geometry merges, partial effect-buffer uploads, dynamic resolution scaling with hysteresis, quality presets and ACES tone mapping; targets 60 FPS on laptops.
+- **Performance** — instanced traffic and static geometry merges, partial effect-buffer uploads, frame-time-driven dynamic resolution, and quality presets that reduce real geometry/particle/light work. BALANCED targets a locked 60 FPS on laptops.
 
 ## Quick start
 
@@ -133,7 +133,7 @@ Any Node host works:
 ## Multiplayer architecture
 
 - `server.js` — static file host + WebSocket relay (`/ws`). Relays gameplay messages inside rooms; no game simulation server-side. `/api/health` for status.
-- Host client owns the mission and optional races: the contract ladder, shards, enemies, extraction, weather and race timers/routes. Guests send intents (`shard-request`, `activity-request`, `shot`, `weather-request`, `chat`, `map-ping`, `player-state`); the host validates (range + line-of-sight anti-cheat) and broadcasts authoritative state at ~11 Hz.
+- Host client owns the mission and optional races: the contract ladder, shards, enemies, extraction, weather, race ownership/timers/routes and storm strikes. Guests send intents (`shard-request`, `activity-request`, `shot`, `weather-request`, `chat`, `map-ping`, `player-state`); the host validates (range + line-of-sight anti-cheat, assigned racer only, mount acknowledgement) and broadcasts authoritative state at ~11 Hz. Remote shots use base weapon damage, not the host's upgrades.
 - If the relay is unreachable, `src/network.js` falls back to PeerJS WebRTC mesh (2 players).
 
 ## Project layout

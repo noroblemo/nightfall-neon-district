@@ -12,12 +12,16 @@ import { setOperatorAsset, setOperatorAssets, setBikeAsset } from './models.js';
 import { NightfallGame } from './game.js';
 
 const QUALITY = {
-  performance: { cap: 0.85, bloom: 0.28, bloomRadius: 0.35, worldQuality: 0.72, low: true, samples: 0 },
-  balanced: { cap: 1.0, bloom: 0.48, bloomRadius: 0.45, worldQuality: 1, low: false, samples: 0 },
-  cinematic: { cap: 1.5, bloom: 0.68, bloomRadius: 0.6, worldQuality: 1, low: false, samples: 4 },
+  performance: { cap: 0.7, bloom: 0.24, bloomRadius: 0.32, bloomScale: 0.45, worldQuality: 0.5, low: true, samples: 0 },
+  balanced: { cap: 0.85, bloom: 0.38, bloomRadius: 0.4, bloomScale: 0.5, worldQuality: 0.72, low: true, samples: 0 },
+  cinematic: { cap: 1.25, bloom: 0.62, bloomRadius: 0.55, bloomScale: 0.65, worldQuality: 1, low: false, samples: 2 },
 };
 
-const MIN_DYNAMIC_SCALE = 0.55;
+const MIN_DYNAMIC_SCALE = 0.5;
+// Target a 60 Hz frame budget (~16.67 ms). Stay in a narrow dead band around
+// vsync so a steady 55 FPS cannot be mistaken for "good enough".
+const SLOW_FRAME_MS = 17.4;
+const FAST_FRAME_MS = 16.9;
 const QUALITY_KEY = 'nightfall:quality';
 // Bump this when any GLB changes so CDNs and GitHub Pages pick up the new
 // assets instead of a previously cached build.
@@ -97,6 +101,7 @@ async function boot() {
   let qualityName = initialQuality;
   let quality = QUALITY[initialQuality];
   let dynamicScale = 1;
+  let bloomScale = quality.bloomScale;
 
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.cap));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
@@ -120,7 +125,10 @@ async function boot() {
   // pass and is visually nearly identical for neon glows.
   const bloomSetSize = bloomPass.setSize.bind(bloomPass);
   bloomPass.setSize = (width, height) => {
-    bloomSetSize(Math.max(2, Math.round(width * 0.65)), Math.max(2, Math.round(height * 0.65)));
+    bloomSetSize(
+      Math.max(2, Math.round(width * bloomScale)),
+      Math.max(2, Math.round(height * bloomScale)),
+    );
   };
   const outputPass = new OutputPass();
   composer.addPass(renderPass);
@@ -129,12 +137,23 @@ async function boot() {
   composer.setSize(window.innerWidth, window.innerHeight);
   effects.setViewport(renderer.domElement.height, camera.fov);
 
+  let appliedWidth = window.innerWidth;
+  let appliedHeight = window.innerHeight;
+
   function applyDpr() {
     const dpr = Math.min(window.devicePixelRatio || 1, quality.cap) * dynamicScale;
     renderer.setPixelRatio(dpr);
-    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    // setPixelRatio already resizes to the stored dimensions; only resize when
+    // the window actually changed so adaptive steps do not reallocate twice.
+    if (appliedWidth !== window.innerWidth || appliedHeight !== window.innerHeight) {
+      appliedWidth = window.innerWidth;
+      appliedHeight = window.innerHeight;
+      renderer.setSize(appliedWidth, appliedHeight, false);
+      composer.setSize(appliedWidth, appliedHeight);
+    }
+    // setPixelRatio internally calls setSize with the composer's stored CSS
+    // size, so no extra composer.setSize is needed for an adaptive DPR step.
     composer.setPixelRatio(dpr);
-    composer.setSize(window.innerWidth, window.innerHeight);
     effects.setViewport(renderer.domElement.height, camera.fov);
   }
 
@@ -142,10 +161,21 @@ async function boot() {
     qualityName = QUALITY[name] ? name : 'balanced';
     quality = QUALITY[qualityName];
     dynamicScale = 1;
+    bloomScale = quality.bloomScale;
     world.quality = quality.worldQuality;
     world.low = quality.low;
     bloomPass.strength = quality.bloom;
     bloomPass.radius = quality.bloomRadius;
+    // MSAA is fixed at construction in three.js; dispose both buffers so the
+    // renderer reallocates them with the selected preset's sample count.
+    if (composer.renderTarget1.samples !== quality.samples) {
+      composer.renderTarget1.samples = quality.samples;
+      composer.renderTarget1.dispose();
+    }
+    if (composer.renderTarget2.samples !== quality.samples) {
+      composer.renderTarget2.samples = quality.samples;
+      composer.renderTarget2.dispose();
+    }
     applyDpr();
   }
   applyQuality(initialQuality);
@@ -196,20 +226,16 @@ async function boot() {
   let fpsAccumulator = 0;
   let fpsFrames = 0;
   let smoothedFps = 60;
-  let adaptTimer = 0;
-  let fastTime = 0;
-  let slowWindows = 0;
+  let smoothedFrameMs = 1000 / 60;
+  let slowFrameMs = 0;
+  let fastFrameMs = 0;
 
   function resize() {
     const width = window.innerWidth;
     const height = window.innerHeight;
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.cap) * dynamicScale);
-    renderer.setSize(width, height, false);
-    composer.setPixelRatio(renderer.getPixelRatio());
-    composer.setSize(width, height);
-    effects.setViewport(renderer.domElement.height, camera.fov);
+    applyDpr();
     ui.initMinimap(world);
   }
 
@@ -225,12 +251,15 @@ async function boot() {
     const dt = Math.min(Math.max(rawDt, 0), 0.05);
     // Ignore tab-switch/stall gaps so they cannot skew FPS or trigger a
     // resolution drop when the page becomes visible again.
+    let sampleMs = 0;
     if (rawDt > 0 && rawDt < 0.25) {
-      fpsAccumulator += rawDt;
+      sampleMs = rawDt * 1000;
+      fpsAccumulator += sampleMs;
       fpsFrames += 1;
     }
-    if (fpsAccumulator >= 0.5) {
-      smoothedFps = fpsFrames / fpsAccumulator;
+    if (fpsAccumulator >= 400) {
+      smoothedFrameMs = fpsAccumulator / fpsFrames;
+      smoothedFps = 1000 / smoothedFrameMs;
       fpsAccumulator = 0;
       fpsFrames = 0;
     }
@@ -245,41 +274,49 @@ async function boot() {
     effects.update(dt);
     composer.render(dt);
 
-    // Adaptive resolution with hysteresis: react to sustained slow windows,
-    // recover slowly, and never oscillate on a single stutter.
-    if (rawDt < 0.25) adaptTimer += rawDt;
+    // Frame-time controller: react to sustained frames over the 60 Hz budget,
+    // then recover as soon as frames are consistently back near vsync. A small
+    // dead band prevents oscillation from normal frame pacing jitter.
     if (game.status === 'playing' || game.status === 'dead') {
-      if (adaptTimer > 1.2) {
-        adaptTimer = 0;
-        if (smoothedFps < 50) {
-          slowWindows += 1;
-          fastTime = 0;
-          if (slowWindows >= 2 && dynamicScale > MIN_DYNAMIC_SCALE) {
-            dynamicScale = Math.max(MIN_DYNAMIC_SCALE, dynamicScale - 0.07);
-            applyDpr();
-            slowWindows = 0;
-          }
-        } else if (smoothedFps > 58) {
-          slowWindows = 0;
-          fastTime += 1.2;
-          if (fastTime >= 6 && dynamicScale < 1) {
-            dynamicScale = Math.min(1, dynamicScale + 0.05);
-            applyDpr();
-            fastTime = 0;
-          }
-        } else {
-          slowWindows = 0;
-          fastTime = 0;
+      if (sampleMs > 0 && smoothedFrameMs > SLOW_FRAME_MS) {
+        fastFrameMs = 0;
+        slowFrameMs += sampleMs;
+        if (slowFrameMs >= 400 && dynamicScale > MIN_DYNAMIC_SCALE) {
+          dynamicScale = Math.max(MIN_DYNAMIC_SCALE, dynamicScale - 0.05);
+          applyDpr();
+          slowFrameMs = 0;
         }
+      } else if (sampleMs > 0 && smoothedFrameMs < FAST_FRAME_MS) {
+        slowFrameMs = 0;
+        fastFrameMs += sampleMs;
+        if (fastFrameMs >= 1600 && dynamicScale < 1) {
+          dynamicScale = Math.min(1, dynamicScale + 0.04);
+          applyDpr();
+          fastFrameMs = 0;
+        }
+      } else {
+        slowFrameMs = 0;
+        fastFrameMs = 0;
       }
     } else {
-      slowWindows = 0;
-      fastTime = 0;
+      slowFrameMs = 0;
+      fastFrameMs = 0;
     }
   }
 
   // Expose a tiny diagnostic handle for browser testing / tuning.
-  window.__nightfall = { game, world, scene, camera, renderer, composer, effects, applyQuality };
+  window.__nightfall = {
+    game,
+    world,
+    scene,
+    camera,
+    renderer,
+    composer,
+    effects,
+    applyQuality,
+    get dynamicScale() { return dynamicScale; },
+    get frameMs() { return smoothedFrameMs; },
+  };
   requestAnimationFrame(frame);
 }
 
