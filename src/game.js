@@ -367,6 +367,7 @@ export class NightfallGame {
     this.recoilSettle = 0;
     this.completed = false;
     this.resultTimer = 0;
+    this.autoRedeployResultId = null;
     this.currentMode = 'foot';
     this.paused = false;
     this.chatOpen = false;
@@ -1185,9 +1186,12 @@ export class NightfallGame {
       score: 0,
       extraction,
       extractProgress: 0,
+      extractStartedAt: null,
       extractSeconds: contractDef.extractSeconds,
       allInside: false,
       completeIn: 0,
+      completeAt: 0,
+      resultId: null,
       contract: this.missionCount,
       contractName: contractDef.name,
       contractTag: contractDef.tag,
@@ -2348,6 +2352,10 @@ export class NightfallGame {
   resetCar() {
     const car = this.localCar;
     if (!car) return;
+    if (this.vehicleSeat !== SEAT_DRIVER) {
+      this.ui.toast('Only the driver can re-sync this vehicle.', 'warn', 2000);
+      return;
+    }
     const spawns = car.kind === 'bike'
       ? (this.world.bikeSpawns || this.world.carSpawns)
       : this.world.carSpawns;
@@ -2487,11 +2495,17 @@ export class NightfallGame {
     if (car) this.enterCar(car);
   }
 
-  enterCar(car) {
+  enterCar(car, requestedSeat = null) {
     if (!this.player || !this.player.alive || !car) return;
     const selfId = this.session?.selfId || 'solo';
     const passengers = this.vehiclePassengers(car);
-    const joinAsPassenger = !!car.occupiedBy && car.occupiedBy !== selfId;
+    // Host corrections can force a seat; ordinary F presses still use the
+    // locally observed occupancy so the first claimant wins.
+    const joinAsPassenger = requestedSeat === SEAT_PASSENGER
+      ? true
+      : requestedSeat === SEAT_DRIVER
+        ? false
+        : !!car.occupiedBy && car.occupiedBy !== selfId;
     if (joinAsPassenger && !this.canCarryPassenger(car, selfId)) {
       this.ui.toast(car.kind === 'bike' ? 'Bikes have one seat.' : 'That car is full.', 'warn', 2200);
       return;
@@ -2891,12 +2905,15 @@ export class NightfallGame {
       && (this.mission.phase === 'extract' || this.mission.phase === 'extracting' || this.mission.phase === 'complete');
   }
 
-  updateMission(dt, elapsed) {
+  updateMission(dt, elapsed, realDt = dt) {
     if (!this.mission) return;
+    // Gameplay physics stays capped for stability, but mission clocks follow
+    // real time so a throttled background tab cannot stall a co-op contract.
+    const timerDt = clamp(Number.isFinite(realDt) ? realDt : dt, 0, 5);
     if (this.isHost) {
       if (this.mission.phase === 'sweep') {
-        this.mission.elapsed += dt;
-        this.mission.sweepRemaining = Math.max(0, this.mission.sweepRemaining - dt);
+        this.mission.elapsed += timerDt;
+        this.mission.sweepRemaining = Math.max(0, this.mission.sweepRemaining - timerDt);
         if (this.mission.sweepRemaining <= 0) {
           this.mission.phase = 'collect';
           this.ui.showMissionBanner('SWEEP CLEARED', 'BREACH THE CACHES', 'ZERO HOUR', 3600);
@@ -2904,12 +2921,12 @@ export class NightfallGame {
         }
       }
       if (this.mission.phase === 'collect' || this.mission.phase === 'extract' || this.mission.phase === 'extracting') {
-        this.mission.elapsed += dt;
+        this.mission.elapsed += timerDt;
       }
       if ((this.mission.mode === 'circuit' || this.mission.mode === 'hunt')
         && this.mission.timeLimit > 0 && !this.mission.overtime
         && this.mission.phase === 'collect') {
-        this.mission.timeRemaining = Math.max(0, (this.mission.timeRemaining ?? this.mission.timeLimit) - dt);
+        this.mission.timeRemaining = Math.max(0, (this.mission.timeRemaining ?? this.mission.timeLimit) - timerDt);
         if (this.mission.timeRemaining <= 0) {
           this.mission.overtime = true;
           this.mission.scoreBonus = 0;
@@ -2927,7 +2944,7 @@ export class NightfallGame {
           const remoteNearby = [...this.remotePlayers.values()].some((remote) => remote.alive
             && dist2D(remote.pos.x, remote.pos.z, shard.x, shard.z) < 7);
           if (nearby || remoteNearby) {
-            shard.progress = clamp((shard.progress || 0) + dt / Math.max(0.5, this.mission.hackSeconds || 2.4), 0, 1);
+            shard.progress = clamp((shard.progress || 0) + timerDt / Math.max(0.5, this.mission.hackSeconds || 2.4), 0, 1);
             if (shard.progress >= 1) {
               this.applyShardCollected(shard, this.myName, true);
               this.mission.breached += 1;
@@ -2961,18 +2978,29 @@ export class NightfallGame {
             allInside = false;
             continue;
           }
+          // Player-state packets keep updating targets even when this tab's
+          // rAF is throttled, so validate against the newest remote position.
+          const remotePos = remote.target || remote.pos;
           const inMarkedCar = this.mission.mode !== 'vehicle'
             || remote.carId === this.mission.extractCarId;
-          if (dist2D(remote.pos.x, remote.pos.z, ex.x, ex.z) > radius || !inMarkedCar) allInside = false;
+          if (dist2D(remotePos.x, remotePos.z, ex.x, ex.z) > radius || !inMarkedCar) allInside = false;
         }
+        const nowMs = Date.now();
         if (allInside) {
           if (this.mission.phase === 'extract') {
             this.mission.phase = 'extracting';
+            this.mission.extractStartedAt = nowMs - this.mission.extractProgress * 1000;
             this.ui.showMissionBanner('EXTRACTION', `HOLD THE RING // ${this.mission.extractSeconds}s`, 'IN PROGRESS', 3200);
             this.ui.feed('All operatives inside. Hold the extraction ring.', 'warn', 'EXTRACT');
             this.audio.boost();
           }
-          this.mission.extractProgress += dt;
+          if (!Number.isFinite(this.mission.extractStartedAt)) {
+            this.mission.extractStartedAt = nowMs - this.mission.extractProgress * 1000;
+          }
+          this.mission.extractProgress = Math.max(
+            this.mission.extractProgress,
+            (nowMs - this.mission.extractStartedAt) / 1000,
+          );
           if (!this.extractWasInside && this.mission.extractProgress > 0.1) {
             this.ui.toast('Extraction in progress — stay inside the ring.', 'info', 2000);
           }
@@ -2987,16 +3015,21 @@ export class NightfallGame {
             this.ui.toast('Extraction interrupted — regroup in the ring.', 'warn', 2400);
             this.ui.feed('Extraction interrupted. Every operative must hold the ring.', 'warn', 'EXTRACT');
           }
+          this.mission.extractStartedAt = null;
           this.extractWasInside = false;
         }
       }
       if (this.mission.phase === 'complete') {
-        this.mission.completeIn = Math.max(0, this.mission.completeIn - dt);
+        if (Number.isFinite(this.mission.completeAt) && this.mission.completeAt > 0) {
+          this.mission.completeIn = Math.max(0, (this.mission.completeAt - Date.now()) / 1000);
+        } else {
+          this.mission.completeIn = Math.max(0, this.mission.completeIn - timerDt);
+        }
         this.ui.updateResultCountdown(this.mission.completeIn);
         if (this.mission.completeIn <= 0) this.resetMission();
       }
       if (this.mission.phase === 'extracting') this.ui.setMission(this.mission, 0);
-      this.sendStateTimer = (this.sendStateTimer || 0) + dt;
+      this.sendStateTimer = (this.sendStateTimer || 0) + timerDt;
       if (this.session?.online && this.sendStateTimer > 0.1) {
         this.sendStateTimer = 0;
         this.sendFullState(false);
@@ -3007,6 +3040,13 @@ export class NightfallGame {
       else {
         this.mission.completeIn = Math.max(0, (this.mission.completeIn ?? 0) - dt);
         this.ui.updateResultCountdown(this.mission.completeIn);
+        const resultId = this.mission.resultId;
+        // If the host tab is throttled, ask it to redeploy as soon as our own
+        // countdown ends. The host ignores duplicate requests after resetting.
+        if (resultId && this.autoRedeployResultId !== resultId && this.mission.completeIn <= 0) {
+          this.autoRedeployResultId = resultId;
+          this.network?.send('redeploy', { resultId });
+        }
       }
     }
   }
@@ -3027,6 +3067,7 @@ export class NightfallGame {
     this.updateUpgradeUI();
     this.mission.creditsEarned = earned;
     this.mission.completeIn = 12;
+    this.mission.completeAt = Date.now() + 12000;
     this.completed = true;
     this.resultTimer = 12;
     this.status = 'result';
@@ -3776,6 +3817,9 @@ export class NightfallGame {
   damagePlayer(amount, source) {
     const p = this.player;
     if (!p || !p.alive || this.status === 'result' || this.status === 'disconnected') return;
+    // An online pause/chat/Controls overlay freezes the local operator without
+    // freezing the host's world for everyone else.
+    if (this.session?.online && (this.paused || this.chatOpen || this.controlsOpen)) return;
     const vehicleFactor = this.currentMode !== 'car' ? 1
       : this.localCar?.kind === 'bike' ? 0.85 : 0.65;
     const adjusted = amount * vehicleFactor;
@@ -3922,16 +3966,35 @@ export class NightfallGame {
       // The local driver owns the car transform; a local passenger must accept
       // the host's copy so a partner can drive them through Crown Heist.
       const localDriver = car === this.localCar && this.vehicleSeat === SEAT_DRIVER;
+      const hostDriver = entry.o || null;
       if (!localDriver && (!car.occupiedBy || !this.remotePlayers.has(car.occupiedBy))) {
         car.x = entry.x;
         car.z = entry.z;
         car.yaw = entry.yaw;
       }
-      car.occupiedBy = entry.o || null;
+      car.occupiedBy = hostDriver;
       car.passengers = Array.isArray(entry.p)
         ? entry.p.filter((id) => id && id !== selfId).slice(0, CAR_PASSENGER_LIMIT)
         : [];
-      if (localDriver) continue;
+      if (localDriver) {
+        // If the host awarded the wheel to someone else, stop integrating this
+        // car locally even if a targeted correction packet was missed.
+        if (hostDriver && hostDriver !== selfId && this.remotePlayers.has(hostDriver)) {
+          this.vehicleSeat = SEAT_PASSENGER;
+          if (!car.passengers.includes(selfId)) car.passengers.push(selfId);
+          car.x = entry.x;
+          car.z = entry.z;
+          car.yaw = entry.yaw;
+          car.speed = 0;
+          car.model.group.position.set(car.x, 0.02, car.z);
+          car.model.group.rotation.y = car.yaw;
+          this.player.pos.set(car.x, 0, car.z);
+          if (this.localChar) this.localChar.group.visible = true;
+          this.ui.toast('Driver seat held by your partner. Riding as passenger.', 'info', 2400);
+          this.sendPlayerState(true);
+        }
+        continue;
+      }
       if (car === this.localCar && entry.o === selfId) {
         if (this.vehicleSeat === SEAT_PASSENGER) {
           this.vehicleSeat = SEAT_DRIVER;
@@ -4050,6 +4113,7 @@ export class NightfallGame {
     } else if (phase !== 'complete' && this.completed) {
       this.completed = false;
       this.ignoreUnlock = false;
+      this.autoRedeployResultId = null;
       this.ui.hideResult();
       if (this.player?.alive) {
         this.status = this.paused ? 'paused' : 'playing';
@@ -4115,8 +4179,10 @@ export class NightfallGame {
         score: this.mission.score,
         extraction: { x: this.mission.extraction.x, z: this.mission.extraction.z },
         extractProgress: this.mission.extractProgress,
+        extractStartedAt: this.mission.extractStartedAt || null,
         extractSeconds: this.mission.extractSeconds,
         completeIn: this.mission.completeIn,
+        completeAt: this.mission.completeAt || 0,
         contract: this.mission.contract,
         contractName: this.mission.contractName,
         contractTag: this.mission.contractTag,
@@ -4312,19 +4378,51 @@ export class NightfallGame {
             asPassenger = true;
           }
           if (asPassenger) {
+            const corrected = previousCarId !== nextCarId || previousSeat !== SEAT_PASSENGER;
             remote.seat = SEAT_PASSENGER;
             if (!passengers.includes(remote.id)) passengers.push(remote.id);
             if (car.occupiedBy === remote.id) car.occupiedBy = null;
+            if (corrected) {
+              this.network?.send('vehicle-seat', {
+                to: remote.id,
+                carId: car.id,
+                seat: SEAT_PASSENGER,
+                driver: car.occupiedBy,
+                x: car.x,
+                z: car.z,
+                yaw: car.yaw,
+                speed: car.speed || 0,
+              });
+            }
           } else if (car.occupiedBy && car.occupiedBy !== remote.id) {
             // No seat left: reject the vehicle claim rather than stealing it.
             remote.carId = null;
             remote.seat = SEAT_DRIVER;
+            this.network?.send('vehicle-seat', {
+              to: remote.id,
+              carId: null,
+              seat: null,
+              reason: 'That vehicle is full. Stay on foot.',
+            });
           } else {
+            const promoted = previousCarId !== nextCarId || previousSeat !== SEAT_DRIVER;
             remote.seat = SEAT_DRIVER;
             if (car.occupiedBy !== remote.id) car.occupiedBy = remote.id;
             car.x = remote.target.x;
             car.z = remote.target.z;
             car.yaw = remote.targetYaw;
+            if (promoted) {
+              this.network?.send('vehicle-seat', {
+                to: remote.id,
+                carId: car.id,
+                seat: SEAT_DRIVER,
+                driver: null,
+                x: car.x,
+                z: car.z,
+                yaw: car.yaw,
+                speed: car.speed || 0,
+              });
+            }
           }
         }
       }
@@ -4333,11 +4431,53 @@ export class NightfallGame {
     }
   }
 
+  // The host owns vehicle occupancy. When two players claim the wheel at once,
+  // this targeted correction stops the loser from driving a phantom car.
+  handleVehicleSeatCorrection(msg) {
+    if (this.isHost || !msg || msg.from !== this.session?.hostId) return;
+    const selfId = this.session?.selfId || 'solo';
+    if (msg.to !== selfId) return;
+    const carId = msg.carId || null;
+    if (!carId) {
+      if (!this.localCar) return;
+      // Do not let a rejected driver claim remove the real driver's seat.
+      if (this.localCar.occupiedBy && this.localCar.occupiedBy !== selfId) {
+        this.vehicleSeat = SEAT_PASSENGER;
+      }
+      this.exitCar();
+      if (msg.reason) this.ui.toast(msg.reason, 'warn', 2400);
+      return;
+    }
+    const car = this.cars.find((c) => c.id === carId);
+    if (!car) return;
+    if (this.localCar && this.localCar !== car) this.exitCar();
+    const driver = msg.driver && msg.driver !== selfId ? msg.driver : null;
+    if (driver) {
+      car.occupiedBy = driver;
+      car.passengers = this.vehiclePassengers(car)
+        .filter((id) => id !== selfId && id !== driver)
+        .slice(0, CAR_PASSENGER_LIMIT);
+    }
+    if (Number.isFinite(msg.x) && Number.isFinite(msg.z)) {
+      car.x = msg.x;
+      car.z = msg.z;
+    }
+    if (Number.isFinite(msg.yaw)) car.yaw = msg.yaw;
+    if (Number.isFinite(msg.speed)) car.speed = msg.speed;
+    car.model.group.position.set(car.x, 0.02, car.z);
+    car.model.group.rotation.y = car.yaw;
+    const seat = msg.seat === SEAT_DRIVER && !driver ? SEAT_DRIVER : SEAT_PASSENGER;
+    this.enterCar(car, seat);
+  }
+
   onNetMessage(msg) {
     if (!this.session || !msg || !msg.from) return;
     switch (msg.type) {
       case 'player-state':
         this.handlePlayerState(msg);
+        break;
+      case 'vehicle-seat':
+        this.handleVehicleSeatCorrection(msg);
         break;
       case 'state':
         if (!this.isHost) this.handleState(msg);
@@ -4716,6 +4856,7 @@ export class NightfallGame {
           id: `shard-${shard.id}`,
           position: new THREE.Vector3(shard.x, 2.2, shard.z),
           label: markerLabel,
+          dynamicLabel: this.mission.mode === 'hack',
           className: 'world-marker--cache',
         });
       }
@@ -4915,8 +5056,9 @@ export class NightfallGame {
     window.location.href = window.location.pathname;
   }
 
-  update(dt, elapsed, fps) {
+  update(dt, elapsed, fps, realDt = dt) {
     this.elapsed = elapsed;
+    this.realDt = Number.isFinite(realDt) ? clamp(realDt, 0, 5) : dt;
     if (Number.isFinite(fps) && fps > 1) this.fps = fps;
     if (!this.session || this.status === 'menu') {
       this.positionMenuCamera(dt);
@@ -4925,7 +5067,7 @@ export class NightfallGame {
     if (this.status === 'disconnected') return;
 
     this.world.lightningAuthority = this.isHost || !this.session.online;
-    const frozen = (this.paused || this.chatOpen) && !this.session.online;
+    const frozen = (this.paused || this.chatOpen || this.controlsOpen) && !this.session.online;
     if (frozen) {
       this.updateCamera(dt, elapsed);
       this.updateHUD(dt, elapsed);
@@ -4941,7 +5083,7 @@ export class NightfallGame {
     this.updateInteractions();
     if (this.isHost) this.updateEnemies(dt, elapsed);
     else this.updateRemoteEnemies(dt, elapsed);
-    this.updateMission(dt, elapsed);
+    this.updateMission(dt, elapsed, this.realDt);
     this.updateActivity(dt);
     this.updateCars(dt);
     this.updateShardVisuals(dt, elapsed);

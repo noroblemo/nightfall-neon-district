@@ -182,6 +182,9 @@ async function boot() {
       composer.renderTarget2.dispose();
     }
     applyDpr();
+    // applyDpr only resizes on DPR/viewport changes. The bloom wrapper also
+    // depends on bloomScale, so force one resize for every quality switch.
+    composer.setSize(appliedWidth, appliedHeight);
   }
   applyQuality(initialQuality);
 
@@ -254,6 +257,9 @@ async function boot() {
     const rawDt = (now - lastTime) / 1000;
     lastTime = now;
     const dt = Math.min(Math.max(rawDt, 0), 0.05);
+    // Mission clocks need the real frame gap; physics and VFX keep the capped
+    // dt so a throttled tab cannot launch anything across the district.
+    const realDt = Math.min(Math.max(rawDt, 0), 5);
     // Ignore tab-switch/stall gaps so they cannot skew FPS or trigger a
     // resolution drop when the page becomes visible again.
     let sampleMs = 0;
@@ -269,7 +275,7 @@ async function boot() {
       fpsFrames = 0;
     }
 
-    game.update(dt, now / 1000, smoothedFps);
+    game.update(dt, now / 1000, smoothedFps, realDt);
     const focus = game.localCar
       ? { x: game.localCar.x, z: game.localCar.z }
       : game.player
