@@ -138,7 +138,7 @@ The same game ships as native Capacitor wrappers. On coarse-pointer devices (and
 
 Prerequisites:
 
-- **Android**: Android Studio with a JDK (JDK 17 recommended).
+- **Android**: Android Studio plus JDK 21. Android Studio's bundled JDK 25 is too new for the current Gradle toolchain; set `JAVA_HOME` to a JDK 21 install when building from the command line.
 - **iOS**: macOS with Xcode 15+.
 
 Build and open a native project:
@@ -154,6 +154,14 @@ To rebuild the web bundle without opening an IDE:
 ```bash
 npm run build:mobile
 npx cap sync
+```
+
+To produce an installable debug APK directly:
+
+```bash
+cd android
+JAVA_HOME=/path/to/jdk21 ANDROID_HOME="$HOME/Library/Android/sdk" ./gradlew assembleDebug
+# output: android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 The apps load the bundled game from `mobile/www`. They discover a relay the same way the browser build does; to point them at a dedicated relay, set `NIGHTFALL_SERVER_URL` when building:
