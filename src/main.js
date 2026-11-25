@@ -10,6 +10,7 @@ import { Effects } from './effects.js';
 import { AudioEngine } from './audio.js';
 import { setOperatorAsset, setOperatorAssets, setBikeAsset } from './models.js';
 import { NightfallGame } from './game.js';
+import { createMobileControls } from './mobile.js';
 
 const QUALITY = {
   performance: { cap: 0.7, bloom: 0.24, bloomRadius: 0.32, bloomScale: 0.45, worldQuality: 0.5, low: true, samples: 0 },
@@ -229,6 +230,7 @@ async function boot() {
 
   ui.setLoading(0.92, 'SYNCING THE NETWORK');
   await game.init();
+  const mobileControls = createMobileControls(game, canvas);
 
   let lastTime = performance.now();
   let fpsAccumulator = 0;
@@ -275,6 +277,7 @@ async function boot() {
       fpsFrames = 0;
     }
 
+    mobileControls.update();
     game.update(dt, now / 1000, smoothedFps, realDt);
     const focus = game.localCar
       ? { x: game.localCar.x, z: game.localCar.z }
@@ -324,6 +327,7 @@ async function boot() {
     renderer,
     composer,
     effects,
+    mobileControls,
     applyQuality,
     get dynamicScale() { return dynamicScale; },
     get frameMs() { return smoothedFrameMs; },

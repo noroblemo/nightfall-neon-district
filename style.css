@@ -2770,3 +2770,251 @@ kbd {
   .connection-note { margin-top: 10px; }
   .landing__footer { display: none; }
 }
+
+/* Touch / native wrappers -------------------------------------------------- */
+body.touch-mode {
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.touch-mode #gameCanvas {
+  touch-action: none;
+}
+
+body.touch-mode #lockHint {
+  display: none !important;
+}
+
+body.touch-mode .landing,
+body.touch-mode .overlay {
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+.touch-controls {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.touch-controls.hidden {
+  display: none;
+}
+
+.touch-look {
+  position: absolute;
+  top: 15%;
+  right: 0;
+  bottom: 25%;
+  width: 52%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-look span {
+  position: absolute;
+  right: 18px;
+  bottom: 8px;
+  color: rgba(190, 244, 255, 0.34);
+  font: 600 8px/1 "Barlow", sans-serif;
+  letter-spacing: 0.18em;
+}
+
+.touch-look.is-active span {
+  color: rgba(93, 246, 255, 0.8);
+}
+
+.touch-stick {
+  position: absolute;
+  left: calc(18px + env(safe-area-inset-left));
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  width: 124px;
+  height: 124px;
+  border: 1px solid rgba(93, 246, 255, 0.28);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(10, 25, 36, 0.52), rgba(4, 8, 15, 0.18) 70%);
+  box-shadow: inset 0 0 22px rgba(93, 246, 255, 0.08), 0 0 24px rgba(0, 0, 0, 0.36);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-stick__ring {
+  position: absolute;
+  inset: 20px;
+  border: 1px dashed rgba(93, 246, 255, 0.16);
+  border-radius: 50%;
+}
+
+.touch-stick__knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 50px;
+  height: 50px;
+  border: 1px solid rgba(93, 246, 255, 0.7);
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, rgba(93, 246, 255, 0.45), rgba(8, 18, 28, 0.88));
+  box-shadow: 0 0 18px rgba(93, 246, 255, 0.3);
+  transform: translate(-50%, -50%);
+}
+
+.touch-fire-group {
+  position: absolute;
+  right: calc(14px + env(safe-area-inset-right));
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.touch-actions {
+  position: absolute;
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(98px + env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: repeat(3, 48px);
+  gap: 8px;
+  pointer-events: none;
+}
+
+.touch-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(93, 246, 255, 0.34);
+  border-radius: 50%;
+  outline: none;
+  color: #cdf8ff;
+  background: rgba(5, 12, 21, 0.62);
+  box-shadow: 0 0 14px rgba(93, 246, 255, 0.08), inset 0 0 12px rgba(93, 246, 255, 0.05);
+  font: 700 8px/1 "Barlow", sans-serif;
+  letter-spacing: 0.05em;
+  pointer-events: auto;
+  touch-action: none;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.touch-btn span {
+  transform: translateY(0.5px);
+}
+
+.touch-btn.is-active {
+  border-color: rgba(93, 246, 255, 0.95);
+  color: #ffffff;
+  background: rgba(93, 246, 255, 0.28);
+  box-shadow: 0 0 22px rgba(93, 246, 255, 0.35), inset 0 0 16px rgba(93, 246, 255, 0.18);
+}
+
+.touch-btn--fire {
+  width: 76px;
+  height: 76px;
+  border-color: rgba(255, 45, 149, 0.5);
+  color: #ffd9ec;
+  background: rgba(38, 5, 24, 0.7);
+  font-size: 10px;
+}
+
+.touch-btn--fire.is-active {
+  border-color: rgba(255, 45, 149, 0.95);
+  background: rgba(255, 45, 149, 0.3);
+  box-shadow: 0 0 24px rgba(255, 45, 149, 0.4);
+}
+
+.touch-btn--aim {
+  width: 54px;
+  height: 54px;
+  margin-bottom: 4px;
+  border-color: rgba(168, 107, 255, 0.5);
+  color: #e8d8ff;
+}
+
+.touch-btn--aim.is-active {
+  border-color: rgba(168, 107, 255, 0.95);
+  background: rgba(168, 107, 255, 0.3);
+}
+
+.touch-btn--boost {
+  border-color: rgba(255, 180, 77, 0.55);
+  color: #ffe3b8;
+}
+
+.touch-btn--jump {
+  border-color: rgba(107, 255, 184, 0.45);
+  color: #d4ffeb;
+}
+
+.touch-btn--pause {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top));
+  right: calc(12px + env(safe-area-inset-right));
+  width: 38px;
+  height: 38px;
+  font-size: 12px;
+}
+
+.touch-controls[data-mode="car"] .touch-btn--foot {
+  display: none;
+}
+
+.touch-controls[data-mode="car"] .touch-actions {
+  bottom: calc(22px + env(safe-area-inset-bottom));
+}
+
+.touch-controls[data-mode="car"] .touch-fire-group {
+  display: none;
+}
+
+.touch-controls[data-mode="car"] .touch-look {
+  bottom: 12%;
+}
+
+@media (max-width: 380px) {
+  .touch-stick {
+    width: 108px;
+    height: 108px;
+  }
+  .touch-actions {
+    grid-template-columns: repeat(3, 44px);
+    gap: 6px;
+    right: calc(10px + env(safe-area-inset-right));
+  }
+  .touch-btn {
+    width: 44px;
+    height: 44px;
+    font-size: 7px;
+  }
+  .touch-btn--fire {
+    width: 68px;
+    height: 68px;
+  }
+  .touch-btn--aim {
+    width: 48px;
+    height: 48px;
+  }
+}
+
+@media (max-height: 620px) {
+  .touch-look {
+    top: 10%;
+    bottom: 30%;
+  }
+  .touch-actions {
+    bottom: calc(82px + env(safe-area-inset-bottom));
+  }
+  .touch-controls[data-mode="car"] .touch-actions {
+    bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  .touch-stick {
+    width: 104px;
+    height: 104px;
+  }
+}

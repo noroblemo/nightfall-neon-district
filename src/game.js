@@ -375,6 +375,8 @@ export class NightfallGame {
     this.ignoreUnlock = false;
 
     this.keys = new Set();
+    this.virtualKeys = new Set();
+    this.touchMode = false;
     this.mouseDown = false;
     this.aiming = false;
     this.cameraYaw = 0;
@@ -1307,6 +1309,87 @@ export class NightfallGame {
     this.keys.delete(event.code);
   }
 
+  // Keyboard and touch share the same gameplay state. Virtual keys stay in a
+  // separate set so pause/menu transitions can clear physical input without
+  // the on-screen controls having to replay every pointer event.
+  keyDown(code) {
+    if (this.keys.has(code)) return true;
+    if (!this.touchMode || this.paused || this.chatOpen || this.controlsOpen) return false;
+    if (this.status !== 'playing' && this.status !== 'dead') return false;
+    return this.virtualKeys.has(code);
+  }
+
+  setVirtualKey(code, active) {
+    if (active) this.virtualKeys.add(code);
+    else this.virtualKeys.delete(code);
+  }
+
+  setVirtualHold(action, active) {
+    const held = !!active && this.status === 'playing' && !this.paused && !this.chatOpen && !this.controlsOpen;
+    if (action === 'fire') this.mouseDown = held;
+    if (action === 'aim') this.aiming = held;
+  }
+
+  clearVirtualInput() {
+    this.virtualKeys.clear();
+  }
+
+  applyLook(dx, dy, scale = 1) {
+    const moveX = (Number(dx) || 0) * scale;
+    const moveY = (Number(dy) || 0) * scale;
+    if (this.chatOpen || this.controlsOpen || this.paused) return;
+    const sens = this.lookSensitivity;
+    if (this.currentMode === 'car') {
+      // Yaw grows counter-clockwise in this world, so look-right must subtract.
+      this.driveLookYaw = clamp(this.driveLookYaw - moveX * 0.0024 * sens, -2.5, 2.5);
+      this.drivePitch = clamp(this.drivePitch + moveY * 0.0016 * sens, 0.02, 0.78);
+      this.lastLookMove = performance.now();
+      return;
+    }
+    this.cameraYaw -= moveX * 0.0022 * sens;
+    if (this.cameraYaw > Math.PI) this.cameraYaw -= TAU;
+    if (this.cameraYaw < -Math.PI) this.cameraYaw += TAU;
+    this.cameraPitch = clamp(this.cameraPitch - moveY * 0.0019 * sens, -1.02, 0.68);
+    this.lastLookMove = performance.now();
+  }
+
+  triggerVirtualAction(action) {
+    if (this.status !== 'playing' && this.status !== 'dead') return;
+    if (this.paused || this.chatOpen || this.controlsOpen) return;
+    switch (action) {
+      case 'jump':
+        if (this.currentMode === 'foot') this.jump();
+        break;
+      case 'vehicle':
+        this.vehicleInteract();
+        break;
+      case 'interact':
+        this.useInteract();
+        break;
+      case 'reload':
+        if (this.currentMode === 'car') this.resetCar();
+        else this.startReload();
+        break;
+      case 'ping':
+        this.sendMapPing();
+        break;
+      case 'race':
+        this.requestActivity();
+        break;
+      case 'weather':
+        this.cycleWeather();
+        break;
+      case 'chat':
+        this.toggleChat(true);
+        break;
+      case 'pause':
+        this.setPaused(true);
+        break;
+      default:
+        break;
+    }
+  }
+
   onMouseDown(event) {
     if (this.status === 'menu' || this.status === 'disconnected' || this.status === 'result') return;
     if (!this.session) return;
@@ -1331,20 +1414,7 @@ export class NightfallGame {
 
   onMouseMove(event) {
     if (document.pointerLockElement !== this.canvas) return;
-    if (this.chatOpen || this.controlsOpen || this.paused) return;
-    const sens = this.lookSensitivity;
-    if (this.currentMode === 'car') {
-      // Yaw grows counter-clockwise in this world, so mouse-right must subtract.
-      this.driveLookYaw = clamp(this.driveLookYaw - event.movementX * 0.0024 * sens, -2.5, 2.5);
-      this.drivePitch = clamp(this.drivePitch + event.movementY * 0.0016 * sens, 0.02, 0.78);
-      this.lastLookMove = performance.now();
-      return;
-    }
-    this.cameraYaw -= event.movementX * 0.0022 * sens;
-    if (this.cameraYaw > Math.PI) this.cameraYaw -= TAU;
-    if (this.cameraYaw < -Math.PI) this.cameraYaw += TAU;
-    this.cameraPitch = clamp(this.cameraPitch - event.movementY * 0.0019 * sens, -1.02, 0.68);
-    this.lastLookMove = performance.now();
+    this.applyLook(event.movementX, event.movementY);
   }
 
   onPointerLockChange() {
@@ -1361,18 +1431,20 @@ export class NightfallGame {
     this.ui.setLockHint(false);
     this.mouseDown = false;
     this.aiming = false;
-    if (this.status === 'playing' && !this.chatOpen && !this.controlsOpen && !this.ignoreUnlock) {
+    if (!this.touchMode && this.status === 'playing' && !this.chatOpen && !this.controlsOpen && !this.ignoreUnlock) {
       this.setPaused(true);
     }
   }
 
   onWindowBlur() {
     this.keys.clear();
+    this.clearVirtualInput();
     this.mouseDown = false;
     this.aiming = false;
   }
 
   requestPointerLock() {
+    if (this.touchMode) return;
     if (!this.session || this.status === 'menu' || this.status === 'disconnected') return;
     try {
       const request = this.canvas.requestPointerLock?.();
@@ -1388,6 +1460,7 @@ export class NightfallGame {
     this.controlsOpen = next;
     this.ui.setControls(next);
     this.keys.clear();
+    this.clearVirtualInput();
     this.mouseDown = false;
     this.aiming = false;
     if (next) {
@@ -1411,6 +1484,7 @@ export class NightfallGame {
     // One state transition owns the music: pause mutes it, resume restores it.
     this.audio.setMusicActive?.(!next);
     this.keys.clear();
+    this.clearVirtualInput();
     this.mouseDown = false;
     this.aiming = false;
     this.ui.setCrosshair(!next);
@@ -1430,6 +1504,7 @@ export class NightfallGame {
     this.chatOpen = next;
     this.ui.setChatOpen(next);
     this.keys.clear();
+    this.clearVirtualInput();
     this.mouseDown = false;
     this.aiming = false;
     if (next) {
@@ -2018,10 +2093,10 @@ export class NightfallGame {
     }
 
     if (canControl) {
-      const forward = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0)
-        - (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
-      const strafe = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0)
-        - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
+      const forward = (this.keyDown('KeyW') || this.keyDown('ArrowUp') ? 1 : 0)
+        - (this.keyDown('KeyS') || this.keyDown('ArrowDown') ? 1 : 0);
+      const strafe = (this.keyDown('KeyD') || this.keyDown('ArrowRight') ? 1 : 0)
+        - (this.keyDown('KeyA') || this.keyDown('ArrowLeft') ? 1 : 0);
       const sin = Math.sin(this.cameraYaw);
       const cos = Math.cos(this.cameraYaw);
       // Strafe right vector is (-cos, sin); the (cos, -sin) basis points screen-left.
@@ -2036,7 +2111,7 @@ export class NightfallGame {
     }
 
     const sprintHeld = canControl && moving && !this.aiming
-      && (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'));
+      && (this.keyDown('ShiftLeft') || this.keyDown('ShiftRight'));
     // Once stamina is empty, lock sprint until a meaningful amount recovers.
     // Without this the flag flips every frame at 0 stamina and the player
     // stutters between walk and sprint speeds.
@@ -2142,13 +2217,13 @@ export class NightfallGame {
     }
     const canControl = this.status === 'playing' && !this.paused && !this.chatOpen && !this.controlsOpen;
     const throttle = canControl
-      ? (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) - (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0)
+      ? (this.keyDown('KeyW') || this.keyDown('ArrowUp') ? 1 : 0) - (this.keyDown('KeyS') || this.keyDown('ArrowDown') ? 1 : 0)
       : 0;
     const steerInput = canControl
-      ? (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0)
+      ? (this.keyDown('KeyD') || this.keyDown('ArrowRight') ? 1 : 0) - (this.keyDown('KeyA') || this.keyDown('ArrowLeft') ? 1 : 0)
       : 0;
-    const handbrake = canControl && this.keys.has('Space');
-    const wantBoost = canControl && (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'));
+    const handbrake = canControl && this.keyDown('Space');
+    const wantBoost = canControl && (this.keyDown('ShiftLeft') || this.keyDown('ShiftRight'));
     car.boost = car.boost ?? 1;
     const isBike = car.kind === 'bike';
     const speedBonus = this.vehicleSpeedBonus || 1;
@@ -2684,7 +2759,7 @@ export class NightfallGame {
         car.z + Math.cos(chaseYaw) * (isBike ? 4.4 : 5.2),
       );
       this.camera.lookAt(tempVec);
-      const targetFov = 64 + clamp(speed / 65, 0, 1) * 9 + (this.keys.has('ShiftLeft') ? 5 : 0);
+      const targetFov = 64 + clamp(speed / 65, 0, 1) * 9 + (this.keyDown('ShiftLeft') ? 5 : 0);
       this.setCameraFov(targetFov, dt);
       return;
     }
@@ -3262,7 +3337,7 @@ export class NightfallGame {
       if (this.currentMode === 'car') this.ui.setCrosshair(false);
       return;
     }
-    if (document.pointerLockElement !== this.canvas) this.mouseDown = false;
+    if (!this.touchMode && document.pointerLockElement !== this.canvas) this.mouseDown = false;
     this.ui.setCrosshair(true, this.aiming, this.isAimBlocked());
     if (this.mouseDown && p.fireCooldown <= 0) this.fireWeapon(elapsed);
   }
@@ -3842,6 +3917,7 @@ export class NightfallGame {
     this.mouseDown = false;
     this.aiming = false;
     this.keys.clear();
+    this.clearVirtualInput();
     if (this.currentMode === 'car') this.exitCar();
     this.ui.showDeath(4);
     this.ui.setCrosshair(false);
@@ -4250,7 +4326,7 @@ export class NightfallGame {
       carId: car?.id || null,
       seat: this.vehicleSeat,
       speed: car ? car.speed : p.moveSpeed,
-      boosting: car ? (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) && car.boost > 0.05 && car.speed > 1 : false,
+      boosting: car ? (this.keyDown('ShiftLeft') || this.keyDown('ShiftRight')) && car.boost > 0.05 && car.speed > 1 : false,
       health: p.health,
       alive: p.alive,
       name: this.myName,
@@ -5045,6 +5121,7 @@ export class NightfallGame {
     this.ui.hideDeath();
     this.ui.setControls(false);
     this.keys.clear();
+    this.clearVirtualInput();
     this.mouseDown = false;
     this.aiming = false;
     this.session = null;

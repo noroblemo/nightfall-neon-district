@@ -132,6 +132,38 @@ Any Node host works:
 | `M` | Mute |
 | `Esc` | Close Controls or chat, then pause / resume |
 
+## Mobile apps (iOS + Android)
+
+The same game ships as native Capacitor wrappers. On coarse-pointer devices (and inside both native apps) a touch layer appears automatically: left stick to move/steer, drag on the right to look, and on-screen FIRE, AIM, BOOST, JUMP/HANDBRAKE, USE, CAR/EXIT, RELOAD/RESET, PING, RACE, WEATHER, CHAT and PAUSE controls. Desktop keyboard/mouse input is unchanged.
+
+Prerequisites:
+
+- **Android**: Android Studio with a JDK (JDK 17 recommended).
+- **iOS**: macOS with Xcode 15+.
+
+Build and open a native project:
+
+```bash
+npm install
+npm run cap:android   # build web bundle, cap sync, open Android Studio
+npm run cap:ios       # build web bundle, cap sync, open Xcode
+```
+
+To rebuild the web bundle without opening an IDE:
+
+```bash
+npm run build:mobile
+npx cap sync
+```
+
+The apps load the bundled game from `mobile/www`. They discover a relay the same way the browser build does; to point them at a dedicated relay, set `NIGHTFALL_SERVER_URL` when building:
+
+```bash
+NIGHTFALL_SERVER_URL=https://relay.example.com npm run cap:sync
+```
+
+Use an HTTPS relay URL. Generated `mobile/www/`, `android/app/src/main/assets/public/` and `ios/App/App/public/` are rebuilt by `cap sync` and are intentionally gitignored. The native app id is `com.noroblemo.nightfall`.
+
 ## Multiplayer architecture
 
 - `server.js` — static file host + WebSocket relay (`/ws`). Relays gameplay messages inside rooms; no game simulation server-side. `/api/health` for status.
@@ -153,8 +185,14 @@ src/textures.js     canvas-generated textures
 src/hud.js          HUD, minimap, toasts, feed
 src/audio.js        WebAudio music, ambience, SFX
 src/network.js      WS relay + PeerJS transports
+src/mobile.js       touch controls for native wrappers
 src/utils.js        math/RNG helpers
 dist/game.js        esbuild bundle (committed build output)
+capacitor.config.json app id/name and native shell settings
+tools/build-mobile.js prepares mobile/www for Capacitor
+android/            generated Android Studio project
+ios/                generated Xcode project
+mobile/www/         generated web bundle for the native apps
 legacy-calculator/  the original calculator app, preserved
 ```
 

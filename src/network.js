@@ -16,7 +16,9 @@ export async function detectGameServer() {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 1800);
-    const res = await fetch('/api/health', { signal: controller.signal, cache: 'no-store' });
+    const configured = typeof window !== 'undefined' ? window.NIGHTFALL_SERVER_URL : '';
+    const endpoint = configured ? new URL('/api/health', configured).toString() : '/api/health';
+    const res = await fetch(endpoint, { signal: controller.signal, cache: 'no-store' });
     clearTimeout(timer);
     if (!res.ok) return false;
     const data = await res.json();

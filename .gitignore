@@ -5,3 +5,13 @@ dist/game.js.map
 previews/
 assets/operator.blend
 assets/operator.blend1
+
+# Capacitor generated web bundles and native build outputs
+mobile/www/
+android/app/src/main/assets/public/
+android/app/build/
+android/.gradle/
+android/local.properties
+ios/App/App/public/
+ios/App/Pods/
+ios/DerivedData/
