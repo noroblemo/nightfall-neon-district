@@ -134,7 +134,7 @@ Any Node host works:
 
 ## Mobile apps (iOS + Android)
 
-The same game ships as native Capacitor wrappers. On coarse-pointer devices (and inside both native apps) a touch layer appears automatically: left stick to move/steer, drag on the right to look, and on-screen FIRE, AIM, BOOST, JUMP/HANDBRAKE, USE, CAR/EXIT, RELOAD/RESET, PING, RACE, WEATHER, CHAT and PAUSE controls. Desktop keyboard/mouse input is unchanged.
+The same game ships as native Capacitor wrappers. On coarse-pointer devices (and inside both native apps) a touch layer appears automatically: left stick to move/steer, drag on the right to look, and on-screen FIRE, AIM, BOOST, JUMP/HANDBRAKE, USE, CAR/EXIT, RELOAD/RESET, PING, RACE, WEATHER and CHAT controls. A dedicated **PAUSE / RESUME** button stays in the top-right corner, including while chat is open; chat also has its own **BACK** button. Desktop keyboard/mouse input is unchanged.
 
 Prerequisites:
 

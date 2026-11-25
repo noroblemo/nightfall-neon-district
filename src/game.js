@@ -496,6 +496,7 @@ export class NightfallGame {
     click('resumeBtn', () => this.setPaused(false));
     click('howToBtn', () => this.setControlsOpen(true));
     click('closeControlsBtn', () => this.setControlsOpen(false));
+    click('chatCloseBtn', () => this.toggleChat(false));
     click('copyInviteBtn', () => this.copyInvite());
     click('leaveBtn', () => this.leaveGame());
     click('reloadBtn', () => window.location.reload());
@@ -1236,7 +1237,15 @@ export class NightfallGame {
 
   onKeyDown(event) {
     const active = document.activeElement;
-    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+      // The chat field owns Escape while focused; keep the global handler as a
+      // fallback for synthetic events or WebViews that do not bubble to it.
+      if (active.id === 'chatInput' && event.code === 'Escape') {
+        event.preventDefault();
+        this.toggleChat(false);
+      }
+      return;
+    }
 
     // Escape is handled before every gameplay gate so the Controls modal can
     // always be closed, including from the landing menu.
@@ -1383,7 +1392,7 @@ export class NightfallGame {
         this.toggleChat(true);
         break;
       case 'pause':
-        this.setPaused(true);
+        this.togglePause();
         break;
       default:
         break;
@@ -1470,10 +1479,23 @@ export class NightfallGame {
     }
   }
 
+  // The dedicated touch button uses one predictable transition no matter what
+  // is open: chat and Controls close first, then the pause panel opens.
+  togglePause() {
+    if (this.status !== 'playing' && this.status !== 'dead' && this.status !== 'paused') return;
+    if (this.controlsOpen) this.setControlsOpen(false);
+    if (this.chatOpen) this.toggleChat(false);
+    this.setPaused(!this.paused);
+  }
+
   setPaused(paused) {
     if (this.status === 'disconnected' || this.status === 'result' || this.status === 'menu') return;
     if (this.status === 'dead') return;
     const next = !!paused;
+    // A pause transition always owns the UI: never leave chat or the Controls
+    // modal stacked underneath the pause panel.
+    if (next && this.chatOpen) this.toggleChat(false);
+    if (next && this.controlsOpen) this.setControlsOpen(false);
     if (this.paused === next && this.status === (next ? 'paused' : 'playing')) {
       if (!next) this.requestPointerLock();
       return;

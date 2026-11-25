@@ -54,11 +54,17 @@ export function createMobileControls(game, canvas) {
   root.setAttribute('aria-label', 'Touch controls');
   root.dataset.mode = 'foot';
 
+  // The pause control lives outside the gameplay-only layer so it stays
+  // reachable while chat is open and when the pause panel is showing.
+  const menuButton = element('button', 'touch-menu-btn hidden', '<span>PAUSE</span>');
+  menuButton.id = 'touchMenuButton';
+  menuButton.type = 'button';
+  menuButton.setAttribute('aria-label', 'Pause game');
+
   const look = element('div', 'touch-look', '<span>DRAG TO LOOK</span>');
   const stick = element('div', 'touch-stick', '<i class="touch-stick__ring"></i><i class="touch-stick__knob"></i>');
   const fireGroup = element('div', 'touch-fire-group');
   const actions = element('div', 'touch-actions');
-  const pauseButton = makeButton('II', 'touch-btn--pause', { action: 'pause' });
 
   const fireButton = makeButton('FIRE', 'touch-btn--fire touch-btn--foot', { hold: 'fire' });
   const aimButton = makeButton('AIM', 'touch-btn--aim touch-btn--foot', { hold: 'aim' });
@@ -77,8 +83,14 @@ export function createMobileControls(game, canvas) {
   ];
   for (const button of buttons) actions.append(button);
 
-  root.append(look, stick, fireGroup, actions, pauseButton);
-  document.body.append(root);
+  root.append(look, stick, fireGroup, actions);
+  document.body.append(menuButton, root);
+
+  menuButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    releaseAll();
+    game.togglePause();
+  });
 
   const directionKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
   const stickState = { id: null, x: 0, y: 0, radius: 52 };
@@ -168,7 +180,7 @@ export function createMobileControls(game, canvas) {
     else if (hold) game.setVirtualKey(KEY_CODES[hold] || hold, false);
   }
 
-  for (const button of [...buttons, pauseButton, fireButton, aimButton]) {
+  for (const button of [...buttons, fireButton, aimButton]) {
     button.addEventListener('pointerdown', (event) => {
       if (game.status !== 'playing' || game.paused || game.chatOpen || game.controlsOpen) return;
       event.preventDefault();
@@ -211,6 +223,14 @@ export function createMobileControls(game, canvas) {
     const visible = game.status === 'playing' && !game.paused && !game.chatOpen && !game.controlsOpen;
     root.classList.toggle('hidden', !visible);
     if (!visible) releaseAll();
+
+    const inRun = game.status === 'playing' || game.status === 'paused';
+    menuButton.classList.toggle('hidden', !inRun || game.controlsOpen);
+    const label = game.paused ? 'RESUME' : 'PAUSE';
+    const labelNode = menuButton.querySelector('span');
+    if (labelNode && labelNode.textContent !== label) labelNode.textContent = label;
+    menuButton.setAttribute('aria-label', game.paused ? 'Resume game' : 'Pause game');
+
     const mode = game.currentMode === 'car' ? 'car' : 'foot';
     if (mode !== lastMode) {
       lastMode = mode;

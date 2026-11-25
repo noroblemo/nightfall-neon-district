@@ -939,8 +939,17 @@ export class UI {
   setChatOpen(open) {
     this.isChatOpen = open;
     $('chatPanel')?.classList.toggle('hidden', !open);
-    if (open) setTimeout(() => $('chatInput')?.focus(), 10);
-    else if ($('chatInput')) $('chatInput').value = '';
+    if (open) {
+      setTimeout(() => {
+        if (this.isChatOpen) $('chatInput')?.focus();
+      }, 10);
+    } else {
+      const input = $('chatInput');
+      if (input) {
+        input.value = '';
+        if (document.activeElement === input) input.blur();
+      }
+    }
   }
 
   setPaused(paused) {

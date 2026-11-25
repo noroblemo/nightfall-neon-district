@@ -2773,6 +2773,17 @@ kbd {
 
 /* Touch / native wrappers -------------------------------------------------- */
 body.touch-mode {
+  --touch-edge: clamp(10px, 2.6vmin, 16px);
+  --touch-gap: clamp(5px, 1.35vmin, 9px);
+  --touch-button: clamp(40px, 10.5vmin, 50px);
+  --touch-stick-size: calc(var(--touch-button) * 2.55);
+  --touch-fire-size: calc(var(--touch-button) * 1.55);
+  --touch-aim-size: calc(var(--touch-button) * 1.16);
+  --touch-menu-size: clamp(42px, 10.5vmin, 50px);
+  --touch-top: calc(env(safe-area-inset-top) + var(--touch-edge));
+  --touch-right: calc(env(safe-area-inset-right) + var(--touch-edge));
+  --touch-left: calc(env(safe-area-inset-left) + var(--touch-edge));
+  --touch-bottom: calc(env(safe-area-inset-bottom) + var(--touch-edge));
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
 }
@@ -2791,6 +2802,133 @@ body.touch-mode .overlay {
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
 }
 
+/* One spacing scale drives the HUD and the controls in both orientations. */
+body.touch-mode .hud__top-left {
+  top: var(--touch-top);
+  left: var(--touch-left);
+  width: min(232px, calc(50vw - var(--touch-gap)));
+}
+
+body.touch-mode .mission-card {
+  width: 100%;
+}
+
+body.touch-mode .hud__top-right {
+  top: calc(var(--touch-top) + var(--touch-menu-size) + var(--touch-gap));
+  right: var(--touch-right);
+  gap: var(--touch-gap);
+}
+
+body.touch-mode .player-list {
+  display: none !important;
+}
+
+body.touch-mode .feed {
+  max-height: 72px;
+  overflow: hidden;
+}
+
+body.touch-mode .hud__bottom-left {
+  left: var(--touch-left);
+  bottom: calc(var(--touch-bottom) + var(--touch-stick-size) + var(--touch-gap));
+  width: min(200px, calc(50vw - var(--touch-gap)));
+}
+
+body.touch-mode .hud__bottom-right {
+  right: var(--touch-right);
+  bottom: calc(
+    var(--touch-bottom) + var(--touch-fire-size) + (var(--touch-button) * 3) + (var(--touch-gap) * 4)
+  );
+}
+
+body.touch-mode .weapon-panel,
+body.touch-mode .hud__bottom-center {
+  display: none !important;
+}
+
+body.touch-mode .chat-panel {
+  bottom: calc(var(--touch-bottom) + var(--touch-gap));
+  width: min(
+    440px,
+    calc(100vw - (var(--touch-edge) * 2) - env(safe-area-inset-left) - env(safe-area-inset-right))
+  );
+  height: 46px;
+  gap: var(--touch-gap);
+  padding: 0 calc(var(--touch-gap) + 3px);
+}
+
+body.touch-mode .chat-panel__label,
+body.touch-mode .chat-panel kbd {
+  display: none;
+}
+
+body.touch-mode .chat-panel input {
+  font-size: 16px;
+}
+
+.chat-panel__close {
+  flex: 0 0 auto;
+  min-width: 50px;
+  height: 30px;
+  border: 1px solid rgba(93, 246, 255, 0.42);
+  border-radius: 6px;
+  background: rgba(93, 246, 255, 0.1);
+  color: #d7fbff;
+  font: 700 8px/1 "Barlow", sans-serif;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
+.chat-panel__close:active {
+  background: rgba(93, 246, 255, 0.28);
+}
+
+/* Landscape phones have little vertical space: keep the mission card and the
+   compact room pill, and drop panels that would sit under the controls. */
+@media (orientation: landscape) {
+  body.touch-mode .map-panel,
+  body.touch-mode .hud__bottom-right,
+  body.touch-mode .feed {
+    display: none !important;
+  }
+
+  body.touch-mode .mission-card p {
+    display: none;
+  }
+}
+
+.touch-menu-btn {
+  position: fixed;
+  top: var(--touch-top);
+  right: var(--touch-right);
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  width: var(--touch-menu-size);
+  height: var(--touch-menu-size);
+  border: 1px solid rgba(93, 246, 255, 0.52);
+  border-radius: 12px;
+  outline: none;
+  background: rgba(5, 12, 21, 0.82);
+  color: #d7fbff;
+  box-shadow: 0 0 18px rgba(93, 246, 255, 0.16), inset 0 0 14px rgba(93, 246, 255, 0.08);
+  font: 700 clamp(7px, 1.45vmin, 9px)/1 "Barlow", sans-serif;
+  letter-spacing: 0.12em;
+  pointer-events: auto;
+  touch-action: manipulation;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.touch-menu-btn.hidden {
+  display: none;
+}
+
+.touch-menu-btn:active {
+  border-color: rgba(93, 246, 255, 0.95);
+  background: rgba(93, 246, 255, 0.26);
+}
+
 .touch-controls {
   position: fixed;
   inset: 0;
@@ -2806,9 +2944,9 @@ body.touch-mode .overlay {
 
 .touch-look {
   position: absolute;
-  top: 15%;
+  top: calc(var(--touch-top) + var(--touch-menu-size) + var(--touch-gap) + 34px);
   right: 0;
-  bottom: 25%;
+  bottom: calc(var(--touch-bottom) + var(--touch-stick-size) + var(--touch-gap));
   width: 52%;
   pointer-events: auto;
   touch-action: none;
@@ -2816,8 +2954,8 @@ body.touch-mode .overlay {
 
 .touch-look span {
   position: absolute;
-  right: 18px;
-  bottom: 8px;
+  right: var(--touch-right);
+  bottom: var(--touch-gap);
   color: rgba(190, 244, 255, 0.34);
   font: 600 8px/1 "Barlow", sans-serif;
   letter-spacing: 0.18em;
@@ -2829,10 +2967,10 @@ body.touch-mode .overlay {
 
 .touch-stick {
   position: absolute;
-  left: calc(18px + env(safe-area-inset-left));
-  bottom: calc(20px + env(safe-area-inset-bottom));
-  width: 124px;
-  height: 124px;
+  left: var(--touch-left);
+  bottom: var(--touch-bottom);
+  width: var(--touch-stick-size);
+  height: var(--touch-stick-size);
   border: 1px solid rgba(93, 246, 255, 0.28);
   border-radius: 50%;
   background: radial-gradient(circle, rgba(10, 25, 36, 0.52), rgba(4, 8, 15, 0.18) 70%);
@@ -2843,7 +2981,7 @@ body.touch-mode .overlay {
 
 .touch-stick__ring {
   position: absolute;
-  inset: 20px;
+  inset: calc(var(--touch-edge) * 0.6);
   border: 1px dashed rgba(93, 246, 255, 0.16);
   border-radius: 50%;
 }
@@ -2852,8 +2990,8 @@ body.touch-mode .overlay {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 50px;
-  height: 50px;
+  width: calc(var(--touch-button) * 0.92);
+  height: calc(var(--touch-button) * 0.92);
   border: 1px solid rgba(93, 246, 255, 0.7);
   border-radius: 50%;
   background: radial-gradient(circle at 40% 35%, rgba(93, 246, 255, 0.45), rgba(8, 18, 28, 0.88));
@@ -2863,21 +3001,21 @@ body.touch-mode .overlay {
 
 .touch-fire-group {
   position: absolute;
-  right: calc(14px + env(safe-area-inset-right));
-  bottom: calc(18px + env(safe-area-inset-bottom));
+  right: var(--touch-right);
+  bottom: var(--touch-bottom);
   display: flex;
   align-items: flex-end;
-  gap: 10px;
+  gap: var(--touch-gap);
   pointer-events: none;
 }
 
 .touch-actions {
   position: absolute;
-  right: calc(16px + env(safe-area-inset-right));
-  bottom: calc(98px + env(safe-area-inset-bottom));
+  right: var(--touch-right);
+  bottom: calc(var(--touch-bottom) + var(--touch-fire-size) + var(--touch-gap));
   display: grid;
-  grid-template-columns: repeat(3, 48px);
-  gap: 8px;
+  grid-template-columns: repeat(3, var(--touch-button));
+  gap: var(--touch-gap);
   pointer-events: none;
 }
 
@@ -2885,8 +3023,8 @@ body.touch-mode .overlay {
   position: relative;
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
+  width: var(--touch-button);
+  height: var(--touch-button);
   margin: 0;
   padding: 0;
   border: 1px solid rgba(93, 246, 255, 0.34);
@@ -2895,7 +3033,7 @@ body.touch-mode .overlay {
   color: #cdf8ff;
   background: rgba(5, 12, 21, 0.62);
   box-shadow: 0 0 14px rgba(93, 246, 255, 0.08), inset 0 0 12px rgba(93, 246, 255, 0.05);
-  font: 700 8px/1 "Barlow", sans-serif;
+  font: 700 clamp(7px, 1.55vmin, 9px)/1 "Barlow", sans-serif;
   letter-spacing: 0.05em;
   pointer-events: auto;
   touch-action: none;
@@ -2915,12 +3053,12 @@ body.touch-mode .overlay {
 }
 
 .touch-btn--fire {
-  width: 76px;
-  height: 76px;
+  width: var(--touch-fire-size);
+  height: var(--touch-fire-size);
   border-color: rgba(255, 45, 149, 0.5);
   color: #ffd9ec;
   background: rgba(38, 5, 24, 0.7);
-  font-size: 10px;
+  font-size: clamp(8px, 1.9vmin, 10px);
 }
 
 .touch-btn--fire.is-active {
@@ -2930,9 +3068,9 @@ body.touch-mode .overlay {
 }
 
 .touch-btn--aim {
-  width: 54px;
-  height: 54px;
-  margin-bottom: 4px;
+  width: var(--touch-aim-size);
+  height: var(--touch-aim-size);
+  margin-bottom: calc(var(--touch-gap) / 2);
   border-color: rgba(168, 107, 255, 0.5);
   color: #e8d8ff;
 }
@@ -2952,69 +3090,14 @@ body.touch-mode .overlay {
   color: #d4ffeb;
 }
 
-.touch-btn--pause {
-  position: absolute;
-  top: calc(12px + env(safe-area-inset-top));
-  right: calc(12px + env(safe-area-inset-right));
-  width: 38px;
-  height: 38px;
-  font-size: 12px;
-}
-
 .touch-controls[data-mode="car"] .touch-btn--foot {
   display: none;
 }
 
 .touch-controls[data-mode="car"] .touch-actions {
-  bottom: calc(22px + env(safe-area-inset-bottom));
+  bottom: var(--touch-bottom);
 }
 
 .touch-controls[data-mode="car"] .touch-fire-group {
   display: none;
-}
-
-.touch-controls[data-mode="car"] .touch-look {
-  bottom: 12%;
-}
-
-@media (max-width: 380px) {
-  .touch-stick {
-    width: 108px;
-    height: 108px;
-  }
-  .touch-actions {
-    grid-template-columns: repeat(3, 44px);
-    gap: 6px;
-    right: calc(10px + env(safe-area-inset-right));
-  }
-  .touch-btn {
-    width: 44px;
-    height: 44px;
-    font-size: 7px;
-  }
-  .touch-btn--fire {
-    width: 68px;
-    height: 68px;
-  }
-  .touch-btn--aim {
-    width: 48px;
-    height: 48px;
-  }
-}
-
-@media (max-height: 620px) {
-  .touch-look {
-    top: 10%;
-    bottom: 30%;
-  }
-  .touch-actions {
-    bottom: calc(82px + env(safe-area-inset-bottom));
-  }
-  .touch-controls[data-mode="car"] .touch-actions {
-    bottom: calc(12px + env(safe-area-inset-bottom));
-  }
-  .touch-stick {
-    width: 104px;
-    height: 104px;
-  }
 }
