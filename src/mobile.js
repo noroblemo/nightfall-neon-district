@@ -111,6 +111,27 @@ export function createMobileControls(game, canvas) {
   const heldButtons = new Set();
   let drawerOpen = false;
 
+  // Touch browsers (especially WebViews) can suppress the compatibility click
+  // for a second finger while another pointer is held down, which made ACTIONS
+  // unopenable while steering. Act on pointerdown and treat click as a keyboard
+  // fallback so the two never toggle twice.
+  function bindTap(node, handler) {
+    let pointerHandled = false;
+    node.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      pointerHandled = true;
+      handler(event);
+    });
+    node.addEventListener('pointercancel', () => {
+      pointerHandled = false;
+    });
+    node.addEventListener('click', (event) => {
+      const handled = pointerHandled && event.detail > 0;
+      pointerHandled = false;
+      if (!handled) handler(event);
+    });
+  }
+
   function releaseButton(button) {
     heldButtons.delete(button);
     button.classList.remove('is-active');
@@ -133,18 +154,18 @@ export function createMobileControls(game, canvas) {
     }
   }
 
-  menuButton.addEventListener('click', (event) => {
+  bindTap(menuButton, (event) => {
     event.preventDefault();
     releaseAll();
     game.togglePause();
   });
 
-  actionsToggle.addEventListener('click', (event) => {
+  bindTap(actionsToggle, (event) => {
     event.preventDefault();
     setDrawerOpen(!drawerOpen);
   });
 
-  drawerClose.addEventListener('click', (event) => {
+  bindTap(drawerClose, (event) => {
     event.preventDefault();
     setDrawerOpen(false);
   });
