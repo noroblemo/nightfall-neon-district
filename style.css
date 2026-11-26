@@ -2830,15 +2830,15 @@ body.touch-mode .feed {
 
 body.touch-mode .hud__bottom-left {
   left: var(--touch-left);
-  bottom: calc(var(--touch-bottom) + var(--touch-stick-size) + var(--touch-gap));
+  bottom: calc(
+    var(--touch-bottom) + var(--touch-stick-size) + var(--touch-aim-size) + (var(--touch-gap) * 2)
+  );
   width: min(200px, calc(50vw - var(--touch-gap)));
 }
 
 body.touch-mode .hud__bottom-right {
   right: var(--touch-right);
-  bottom: calc(
-    var(--touch-bottom) + var(--touch-fire-size) + (var(--touch-button) * 3) + (var(--touch-gap) * 4)
-  );
+  bottom: calc(var(--touch-bottom) + var(--touch-fire-size) + var(--touch-button) + (var(--touch-gap) * 2));
 }
 
 body.touch-mode .weapon-panel,
@@ -2886,7 +2886,6 @@ body.touch-mode .chat-panel input {
 /* Landscape phones have little vertical space: keep the mission card and the
    compact room pill, and drop panels that would sit under the controls. */
 @media (orientation: landscape) {
-  body.touch-mode .map-panel,
   body.touch-mode .hud__bottom-right,
   body.touch-mode .feed {
     display: none !important;
@@ -2894,6 +2893,22 @@ body.touch-mode .chat-panel input {
 
   body.touch-mode .mission-card p {
     display: none;
+  }
+
+  /* Keep the minimap top-right under Pause, but compact enough to clear the
+     fire and quick-actions controls on short screens. */
+  body.touch-mode .map-panel {
+    width: 106px;
+    padding: 6px;
+  }
+
+  body.touch-mode .minimap-wrap {
+    width: 88px;
+    height: 88px;
+  }
+
+  body.touch-mode.touch-actions-open .map-panel {
+    display: none !important;
   }
 }
 
@@ -2947,6 +2962,7 @@ body.touch-mode .chat-panel input {
   top: calc(var(--touch-top) + var(--touch-menu-size) + var(--touch-gap) + 34px);
   right: 0;
   bottom: calc(var(--touch-bottom) + var(--touch-stick-size) + var(--touch-gap));
+  z-index: 1;
   width: 52%;
   pointer-events: auto;
   touch-action: none;
@@ -2969,6 +2985,7 @@ body.touch-mode .chat-panel input {
   position: absolute;
   left: var(--touch-left);
   bottom: var(--touch-bottom);
+  z-index: 2;
   width: var(--touch-stick-size);
   height: var(--touch-stick-size);
   border: 1px solid rgba(93, 246, 255, 0.28);
@@ -2999,24 +3016,120 @@ body.touch-mode .chat-panel input {
   transform: translate(-50%, -50%);
 }
 
+.touch-aim-group {
+  position: absolute;
+  left: var(--touch-left);
+  bottom: calc(var(--touch-bottom) + var(--touch-stick-size) + var(--touch-gap));
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  width: var(--touch-stick-size);
+  pointer-events: none;
+}
+
 .touch-fire-group {
   position: absolute;
   right: var(--touch-right);
   bottom: var(--touch-bottom);
-  display: flex;
-  align-items: flex-end;
-  gap: var(--touch-gap);
+  z-index: 2;
   pointer-events: none;
 }
 
-.touch-actions {
+.touch-actions-toggle {
   position: absolute;
   right: var(--touch-right);
   bottom: calc(var(--touch-bottom) + var(--touch-fire-size) + var(--touch-gap));
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: calc(var(--touch-button) * 0.82);
+  padding: 0 calc(var(--touch-gap) + 4px);
+  border: 1px solid rgba(93, 246, 255, 0.42);
+  border-radius: 999px;
+  outline: none;
+  background: rgba(5, 12, 21, 0.86);
+  color: #d7fbff;
+  box-shadow: 0 0 16px rgba(93, 246, 255, 0.14), inset 0 0 12px rgba(93, 246, 255, 0.07);
+  font: 700 clamp(7px, 1.35vmin, 8px)/1 "Barlow", sans-serif;
+  letter-spacing: 0.12em;
+  pointer-events: auto;
+  touch-action: manipulation;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.touch-actions-toggle i {
+  font-style: normal;
+  font-size: 10px;
+  transition: transform 140ms ease;
+}
+
+.touch-actions-toggle.is-open {
+  border-color: rgba(93, 246, 255, 0.9);
+  background: rgba(93, 246, 255, 0.22);
+}
+
+.touch-actions-toggle.is-open i {
+  transform: rotate(180deg);
+}
+
+.touch-drawer {
+  position: absolute;
+  right: var(--touch-right);
+  bottom: calc(var(--touch-bottom) + var(--touch-fire-size) + var(--touch-button) + (var(--touch-gap) * 2));
+  z-index: 3;
+  width: calc((var(--touch-button) * 3) + (var(--touch-gap) * 2) + 20px);
+  padding: calc(var(--touch-gap) + 3px);
+  border: 1px solid rgba(93, 246, 255, 0.36);
+  border-radius: 14px;
+  background: rgba(5, 12, 21, 0.94);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5), 0 0 24px rgba(93, 246, 255, 0.12),
+    inset 0 0 18px rgba(93, 246, 255, 0.06);
+  pointer-events: auto;
+  touch-action: manipulation;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.touch-drawer.hidden {
+  display: none;
+}
+
+.touch-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--touch-gap);
+  color: rgba(190, 244, 255, 0.58);
+  font: 700 clamp(7px, 1.2vmin, 8px)/1 "Barlow", sans-serif;
+  letter-spacing: 0.16em;
+}
+
+.touch-drawer__close {
+  margin: 0;
+  padding: 3px 5px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #9eefff;
+  font: 700 8px/1 "Barlow", sans-serif;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+.touch-drawer__grid {
   display: grid;
-  grid-template-columns: repeat(3, var(--touch-button));
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--touch-gap);
-  pointer-events: none;
+}
+
+.touch-drawer .touch-btn {
+  width: 100%;
+  height: var(--touch-button);
+  border-radius: 10px;
+  font-size: clamp(7px, 1.2vmin, 8px);
+  letter-spacing: 0.02em;
 }
 
 .touch-btn {
@@ -3070,7 +3183,6 @@ body.touch-mode .chat-panel input {
 .touch-btn--aim {
   width: var(--touch-aim-size);
   height: var(--touch-aim-size);
-  margin-bottom: calc(var(--touch-gap) / 2);
   border-color: rgba(168, 107, 255, 0.5);
   color: #e8d8ff;
 }
@@ -3094,10 +3206,41 @@ body.touch-mode .chat-panel input {
   display: none;
 }
 
-.touch-controls[data-mode="car"] .touch-actions {
+.touch-controls[data-mode="car"] .touch-aim-group,
+.touch-controls[data-mode="car"] .touch-fire-group {
+  display: none;
+}
+
+.touch-controls[data-mode="car"] .touch-actions-toggle {
   bottom: var(--touch-bottom);
 }
 
-.touch-controls[data-mode="car"] .touch-fire-group {
-  display: none;
+.touch-controls[data-mode="car"] .touch-drawer {
+  bottom: calc(var(--touch-bottom) + var(--touch-button) + (var(--touch-gap) * 2));
+}
+
+@media (orientation: landscape) {
+  .touch-drawer {
+    width: calc((var(--touch-button) * 5) + (var(--touch-gap) * 4) + 20px);
+  }
+
+  .touch-drawer__grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  .touch-drawer .touch-btn {
+    height: calc(var(--touch-button) * 0.86);
+  }
+
+  /* Side-by-side AIM leaves room for the vitals above the movement stick. */
+  body.touch-mode .hud__bottom-left {
+    bottom: calc(var(--touch-bottom) + var(--touch-stick-size) + var(--touch-gap));
+  }
+
+  .touch-aim-group {
+    left: calc(var(--touch-left) + var(--touch-stick-size) + var(--touch-gap));
+    bottom: var(--touch-bottom);
+    width: var(--touch-aim-size);
+    justify-content: flex-start;
+  }
 }

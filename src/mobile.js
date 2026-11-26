@@ -63,33 +63,86 @@ export function createMobileControls(game, canvas) {
 
   const look = element('div', 'touch-look', '<span>DRAG TO LOOK</span>');
   const stick = element('div', 'touch-stick', '<i class="touch-stick__ring"></i><i class="touch-stick__knob"></i>');
+  const aimGroup = element('div', 'touch-aim-group');
   const fireGroup = element('div', 'touch-fire-group');
-  const actions = element('div', 'touch-actions');
+  const actionsToggle = element('button', 'touch-actions-toggle', '<span>ACTIONS</span><i aria-hidden="true">▾</i>');
+  actionsToggle.id = 'touchActionsToggle';
+  actionsToggle.type = 'button';
+  actionsToggle.setAttribute('aria-label', 'Open quick actions');
+  actionsToggle.setAttribute('aria-expanded', 'false');
+  actionsToggle.setAttribute('aria-controls', 'touchActionsDrawer');
+
+  const drawer = element('div', 'touch-drawer hidden');
+  drawer.id = 'touchActionsDrawer';
+  drawer.setAttribute('aria-label', 'Quick actions');
+  const drawerHead = element('div', 'touch-drawer__head', '<span>QUICK ACTIONS</span>');
+  const drawerClose = element('button', 'touch-drawer__close', 'CLOSE');
+  drawerClose.type = 'button';
+  drawerClose.setAttribute('aria-label', 'Close quick actions');
+  drawerHead.append(drawerClose);
+  const drawerGrid = element('div', 'touch-drawer__grid');
+  drawer.append(drawerHead, drawerGrid);
 
   const fireButton = makeButton('FIRE', 'touch-btn--fire touch-btn--foot', { hold: 'fire' });
   const aimButton = makeButton('AIM', 'touch-btn--aim touch-btn--foot', { hold: 'aim' });
-  fireGroup.append(fireButton, aimButton);
+  aimGroup.append(aimButton);
+  fireGroup.append(fireButton);
 
   const buttons = [
     makeButton('BOOST', 'touch-btn--boost', { hold: 'boost' }),
     makeButton('JUMP', 'touch-btn--jump touch-btn--foot', { hold: 'brake', action: 'jump' }),
     makeButton('USE', 'touch-btn--use', { action: 'interact' }),
     makeButton('CAR', 'touch-btn--car', { action: 'vehicle' }),
-    makeButton('RELOAD', 'touch-btn--reload touch-btn--foot', { action: 'reload' }),
+    makeButton('RELOAD', 'touch-btn--reload', { action: 'reload' }),
     makeButton('PING', 'touch-btn--ping', { action: 'ping' }),
     makeButton('RACE', 'touch-btn--race', { action: 'race' }),
     makeButton('WX', 'touch-btn--weather', { action: 'weather' }),
     makeButton('CHAT', 'touch-btn--chat', { action: 'chat' }),
   ];
-  for (const button of buttons) actions.append(button);
+  for (const button of buttons) drawerGrid.append(button);
 
-  root.append(look, stick, fireGroup, actions);
+  root.append(look, stick, aimGroup, fireGroup, actionsToggle, drawer);
   document.body.append(menuButton, root);
+
+  const heldButtons = new Set();
+  let drawerOpen = false;
+
+  function releaseButton(button) {
+    heldButtons.delete(button);
+    button.classList.remove('is-active');
+    const hold = button.dataset.hold;
+    if (hold === 'fire' || hold === 'aim') game.setVirtualHold(hold, false);
+    else if (hold) game.setVirtualKey(KEY_CODES[hold] || hold, false);
+  }
+
+  function setDrawerOpen(open, releaseHeld = true) {
+    const next = !!open && game.status === 'playing' && !game.paused && !game.chatOpen && !game.controlsOpen;
+    if (drawerOpen === next) return;
+    drawerOpen = next;
+    drawer.classList.toggle('hidden', !next);
+    document.body.classList.toggle('touch-actions-open', next);
+    actionsToggle.classList.toggle('is-open', next);
+    actionsToggle.setAttribute('aria-expanded', String(next));
+    actionsToggle.setAttribute('aria-label', next ? 'Close quick actions' : 'Open quick actions');
+    if (!next && releaseHeld) {
+      for (const button of buttons) if (heldButtons.has(button)) releaseButton(button);
+    }
+  }
 
   menuButton.addEventListener('click', (event) => {
     event.preventDefault();
     releaseAll();
     game.togglePause();
+  });
+
+  actionsToggle.addEventListener('click', (event) => {
+    event.preventDefault();
+    setDrawerOpen(!drawerOpen);
+  });
+
+  drawerClose.addEventListener('click', (event) => {
+    event.preventDefault();
+    setDrawerOpen(false);
   });
 
   const directionKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
@@ -171,15 +224,6 @@ export function createMobileControls(game, canvas) {
   look.addEventListener('pointerup', endLook);
   look.addEventListener('pointercancel', endLook);
 
-  const heldButtons = new Set();
-  function releaseButton(button) {
-    heldButtons.delete(button);
-    button.classList.remove('is-active');
-    const hold = button.dataset.hold;
-    if (hold === 'fire' || hold === 'aim') game.setVirtualHold(hold, false);
-    else if (hold) game.setVirtualKey(KEY_CODES[hold] || hold, false);
-  }
-
   for (const button of [...buttons, fireButton, aimButton]) {
     button.addEventListener('pointerdown', (event) => {
       if (game.status !== 'playing' || game.paused || game.chatOpen || game.controlsOpen) return;
@@ -195,6 +239,7 @@ export function createMobileControls(game, canvas) {
     const endButton = (event) => {
       event.preventDefault();
       releaseButton(button);
+      if (button.parentElement === drawerGrid) setDrawerOpen(false, false);
     };
     button.addEventListener('pointerup', endButton);
     button.addEventListener('pointercancel', endButton);
@@ -206,6 +251,7 @@ export function createMobileControls(game, canvas) {
     for (const button of [...heldButtons]) releaseButton(button);
     game.setVirtualHold('fire', false);
     game.setVirtualHold('aim', false);
+    setDrawerOpen(false, false);
     lookState.id = null;
     look.classList.remove('is-active');
   }
@@ -235,6 +281,7 @@ export function createMobileControls(game, canvas) {
     if (mode !== lastMode) {
       lastMode = mode;
       root.dataset.mode = mode;
+      setDrawerOpen(false);
       const carButton = root.querySelector('.touch-btn--car span');
       if (carButton) carButton.textContent = mode === 'car' ? 'EXIT' : 'CAR';
       const reloadButton = root.querySelector('.touch-btn--reload span');
