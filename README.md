@@ -134,7 +134,7 @@ Any Node host works:
 
 ## Mobile apps (iOS + Android)
 
-The same game ships as native Capacitor wrappers. On coarse-pointer devices (and inside both native apps) a touch layer appears automatically: left stick to move/steer, left-side **AIM**, drag on the right to look, and a right-side **FIRE** button. Secondary actions live in a compact **ACTIONS** dropdown above FIRE (BOOST, JUMP/HANDBRAKE, USE, CAR/EXIT, RELOAD/RESET, PING, RACE, WEATHER and CHAT) and the minimap stays aligned top-right under the dedicated **PAUSE / RESUME** button. Pause remains reachable while chat is open; chat also has its own **BACK** button. Desktop keyboard/mouse input is unchanged.
+The same game ships as native Capacitor wrappers. The layout is designed for **landscape**: translucent circular buttons inspired by FIFA Mobile, with the movement stick and **AIM** on the left, drag-to-look on the right, and a large **FIRE** button on the far right. Multiple buttons can be held at once — for example, hold **AIM** and **FIRE** together, or steer with the stick while holding **BOOST**. Secondary actions open as a compact circular **ACTIONS** cluster above FIRE (BOOST, JUMP/HANDBRAKE, USE, CAR/EXIT, RELOAD/RESET, PING, RACE, WEATHER and CHAT); it closes after a button is used and hides the minimap while open. The minimap otherwise stays aligned top-right under the dedicated **PAUSE / RESUME** button. Pause remains reachable while chat is open; chat also has its own **BACK** button. Desktop keyboard/mouse input is unchanged.
 
 Prerequisites:
 

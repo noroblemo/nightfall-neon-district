@@ -3041,37 +3041,41 @@ body.touch-mode .chat-panel input {
   bottom: calc(var(--touch-bottom) + var(--touch-fire-size) + var(--touch-gap));
   z-index: 3;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 5px;
-  height: calc(var(--touch-button) * 0.82);
-  padding: 0 calc(var(--touch-gap) + 4px);
-  border: 1px solid rgba(93, 246, 255, 0.42);
-  border-radius: 999px;
+  justify-content: center;
+  width: var(--touch-button);
+  height: var(--touch-button);
+  border: 1px solid rgba(220, 248, 255, 0.38);
+  border-radius: 50%;
   outline: none;
-  background: rgba(5, 12, 21, 0.86);
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgba(6, 14, 24, 0.68);
   color: #d7fbff;
-  box-shadow: 0 0 16px rgba(93, 246, 255, 0.14), inset 0 0 12px rgba(93, 246, 255, 0.07);
-  font: 700 clamp(7px, 1.35vmin, 8px)/1 "Barlow", sans-serif;
-  letter-spacing: 0.12em;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.42), inset 0 0 12px rgba(255, 255, 255, 0.05);
   pointer-events: auto;
   touch-action: manipulation;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
 
-.touch-actions-toggle i {
-  font-style: normal;
-  font-size: 10px;
-  transition: transform 140ms ease;
+.touch-actions-toggle__dots {
+  font-size: 12px;
+  line-height: 8px;
+  letter-spacing: 1px;
+}
+
+.touch-actions-toggle__label {
+  margin-top: 3px;
+  font: 700 6px/1 "Barlow", sans-serif;
+  letter-spacing: 0.08em;
 }
 
 .touch-actions-toggle.is-open {
   border-color: rgba(93, 246, 255, 0.9);
-  background: rgba(93, 246, 255, 0.22);
-}
-
-.touch-actions-toggle.is-open i {
-  transform: rotate(180deg);
+  background: rgba(93, 246, 255, 0.24);
+  box-shadow: 0 0 20px rgba(93, 246, 255, 0.3), inset 0 0 14px rgba(255, 255, 255, 0.1);
 }
 
 .touch-drawer {
@@ -3079,17 +3083,18 @@ body.touch-mode .chat-panel input {
   right: var(--touch-right);
   bottom: calc(var(--touch-bottom) + var(--touch-fire-size) + var(--touch-button) + (var(--touch-gap) * 2));
   z-index: 3;
-  width: calc((var(--touch-button) * 3) + (var(--touch-gap) * 2) + 20px);
-  padding: calc(var(--touch-gap) + 3px);
-  border: 1px solid rgba(93, 246, 255, 0.36);
-  border-radius: 14px;
-  background: rgba(5, 12, 21, 0.94);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5), 0 0 24px rgba(93, 246, 255, 0.12),
-    inset 0 0 18px rgba(93, 246, 255, 0.06);
-  pointer-events: auto;
+  width: calc((var(--touch-button) * 3) + (var(--touch-gap) * 2));
+  pointer-events: none;
   touch-action: manipulation;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+}
+
+.touch-drawer::before {
+  content: '';
+  position: absolute;
+  inset: -12px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(93, 246, 255, 0.1), transparent 70%);
+  pointer-events: none;
 }
 
 .touch-drawer.hidden {
@@ -3097,39 +3102,23 @@ body.touch-mode .chat-panel input {
 }
 
 .touch-drawer__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--touch-gap);
-  color: rgba(190, 244, 255, 0.58);
-  font: 700 clamp(7px, 1.2vmin, 8px)/1 "Barlow", sans-serif;
-  letter-spacing: 0.16em;
-}
-
-.touch-drawer__close {
-  margin: 0;
-  padding: 3px 5px;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: #9eefff;
-  font: 700 8px/1 "Barlow", sans-serif;
-  letter-spacing: 0.12em;
-  cursor: pointer;
+  display: none;
 }
 
 .touch-drawer__grid {
+  position: relative;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, var(--touch-button));
   gap: var(--touch-gap);
+  justify-content: end;
 }
 
 .touch-drawer .touch-btn {
-  width: 100%;
+  width: var(--touch-button);
   height: var(--touch-button);
-  border-radius: 10px;
-  font-size: clamp(7px, 1.2vmin, 8px);
-  letter-spacing: 0.02em;
+  border-radius: 50%;
+  background: rgba(6, 14, 24, 0.58);
+  border-color: rgba(220, 248, 255, 0.28);
 }
 
 .touch-btn {
@@ -3140,56 +3129,86 @@ body.touch-mode .chat-panel input {
   height: var(--touch-button);
   margin: 0;
   padding: 0;
-  border: 1px solid rgba(93, 246, 255, 0.34);
+  border: 1px solid rgba(220, 248, 255, 0.34);
   border-radius: 50%;
   outline: none;
-  color: #cdf8ff;
-  background: rgba(5, 12, 21, 0.62);
-  box-shadow: 0 0 14px rgba(93, 246, 255, 0.08), inset 0 0 12px rgba(93, 246, 255, 0.05);
-  font: 700 clamp(7px, 1.55vmin, 9px)/1 "Barlow", sans-serif;
-  letter-spacing: 0.05em;
+  appearance: none;
+  -webkit-appearance: none;
+  color: #e6fbff;
+  background: rgba(6, 14, 24, 0.66);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.44), inset 0 0 12px rgba(255, 255, 255, 0.05);
+  font: 700 clamp(7px, 1.35vmin, 8px)/1 "Barlow", sans-serif;
+  letter-spacing: 0.04em;
   pointer-events: auto;
   touch-action: none;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  transition: transform 90ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.touch-btn::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  opacity: 0.14;
+  pointer-events: none;
 }
 
 .touch-btn span {
+  position: relative;
+  z-index: 1;
   transform: translateY(0.5px);
 }
 
 .touch-btn.is-active {
   border-color: rgba(93, 246, 255, 0.95);
   color: #ffffff;
-  background: rgba(93, 246, 255, 0.28);
-  box-shadow: 0 0 22px rgba(93, 246, 255, 0.35), inset 0 0 16px rgba(93, 246, 255, 0.18);
+  background: rgba(93, 246, 255, 0.26);
+  box-shadow: 0 0 22px rgba(93, 246, 255, 0.35), inset 0 0 16px rgba(255, 255, 255, 0.14);
+  transform: scale(0.96);
 }
 
 .touch-btn--fire {
   width: var(--touch-fire-size);
   height: var(--touch-fire-size);
-  border-color: rgba(255, 45, 149, 0.5);
+  border-color: rgba(255, 120, 190, 0.48);
   color: #ffd9ec;
-  background: rgba(38, 5, 24, 0.7);
-  font-size: clamp(8px, 1.9vmin, 10px);
+  background: rgba(42, 7, 28, 0.7);
+  font-size: clamp(8px, 1.7vmin, 10px);
+}
+
+.touch-btn--fire::before {
+  inset: 8px;
+  border-width: 2px;
+  opacity: 0.24;
 }
 
 .touch-btn--fire.is-active {
   border-color: rgba(255, 45, 149, 0.95);
-  background: rgba(255, 45, 149, 0.3);
-  box-shadow: 0 0 24px rgba(255, 45, 149, 0.4);
+  background: rgba(255, 45, 149, 0.32);
+  box-shadow: 0 0 26px rgba(255, 45, 149, 0.45);
 }
 
 .touch-btn--aim {
   width: var(--touch-aim-size);
   height: var(--touch-aim-size);
-  border-color: rgba(168, 107, 255, 0.5);
-  color: #e8d8ff;
+  border-color: rgba(190, 140, 255, 0.52);
+  color: #eadcff;
+  background: rgba(24, 12, 42, 0.68);
+}
+
+.touch-btn--aim::before {
+  inset: 6px;
+  border-style: dashed;
+  opacity: 0.34;
 }
 
 .touch-btn--aim.is-active {
-  border-color: rgba(168, 107, 255, 0.95);
-  background: rgba(168, 107, 255, 0.3);
+  border-color: rgba(190, 140, 255, 0.95);
+  background: rgba(168, 107, 255, 0.34);
+  box-shadow: 0 0 22px rgba(168, 107, 255, 0.4);
 }
 
 .touch-btn--boost {
@@ -3220,18 +3239,6 @@ body.touch-mode .chat-panel input {
 }
 
 @media (orientation: landscape) {
-  .touch-drawer {
-    width: calc((var(--touch-button) * 5) + (var(--touch-gap) * 4) + 20px);
-  }
-
-  .touch-drawer__grid {
-    grid-template-columns: repeat(5, 1fr);
-  }
-
-  .touch-drawer .touch-btn {
-    height: calc(var(--touch-button) * 0.86);
-  }
-
   /* Side-by-side AIM leaves room for the vitals above the movement stick. */
   body.touch-mode .hud__bottom-left {
     bottom: calc(var(--touch-bottom) + var(--touch-stick-size) + var(--touch-gap));
@@ -3242,5 +3249,158 @@ body.touch-mode .chat-panel input {
     bottom: var(--touch-bottom);
     width: var(--touch-aim-size);
     justify-content: flex-start;
+  }
+}
+
+/* Landscape phones: keep the whole home screen above the fold. Branding sits
+   on the left and the account/actions card on the right, like a console menu. */
+@media (orientation: landscape) and (max-height: 520px) {
+  body.touch-mode .landing {
+    padding: calc(10px + env(safe-area-inset-top)) var(--touch-left)
+      calc(10px + env(safe-area-inset-bottom));
+  }
+
+  body.touch-mode .landing__top {
+    gap: 10px;
+    margin-bottom: 0;
+  }
+
+  body.touch-mode .brand {
+    gap: 9px;
+  }
+
+  body.touch-mode .brand__mark {
+    width: 30px;
+    height: 30px;
+    font-size: 18px;
+  }
+
+  body.touch-mode .brand__text span {
+    font-size: 16px;
+  }
+
+  body.touch-mode .brand__text small {
+    font-size: 7px;
+    margin-top: 2px;
+  }
+
+  body.touch-mode .server-badge,
+  body.touch-mode .mini-btn {
+    height: 26px;
+    font-size: 8px;
+  }
+
+  body.touch-mode .server-badge {
+    padding: 0 8px;
+  }
+
+  body.touch-mode .mini-btn {
+    padding: 0 10px;
+  }
+
+  body.touch-mode .landing__main {
+    display: block;
+    padding: 8px 0 0;
+    overflow: hidden;
+  }
+
+  body.touch-mode .hero {
+    display: grid;
+    grid-template-columns: minmax(190px, 0.9fr) minmax(340px, 1fr);
+    grid-template-areas:
+      "eyebrow card"
+      "title card"
+      "note card";
+    column-gap: 20px;
+    align-items: start;
+    width: 100%;
+    max-width: none;
+    animation: none;
+  }
+
+  body.touch-mode .eyebrow {
+    grid-area: eyebrow;
+    font-size: 8px;
+    letter-spacing: 0.18em;
+  }
+
+  body.touch-mode .eyebrow__line {
+    width: 18px;
+  }
+
+  body.touch-mode .game-title {
+    grid-area: title;
+    margin: 8px 0 0;
+  }
+
+  body.touch-mode .game-title__top,
+  body.touch-mode .game-title__bottom {
+    font-size: clamp(56px, 14vh, 76px);
+  }
+
+  body.touch-mode .connection-note {
+    grid-area: note;
+    max-width: 260px;
+    margin-top: 14px;
+    font-size: 9px;
+  }
+
+  body.touch-mode .menu-card {
+    grid-area: card;
+    width: 100%;
+    max-width: 420px;
+    justify-self: end;
+    padding: 10px 12px;
+  }
+
+  body.touch-mode .menu-card > .field {
+    margin-bottom: 5px;
+  }
+
+  body.touch-mode .field__label {
+    font-size: 7px;
+    margin-bottom: 3px;
+  }
+
+  body.touch-mode .field__input {
+    height: 26px;
+    padding: 0 9px;
+    font-size: 14px;
+  }
+
+  body.touch-mode .segmented button {
+    height: 24px;
+    font-size: 7px;
+  }
+
+  body.touch-mode .action-btn,
+  body.touch-mode .action-btn--join {
+    min-height: 40px;
+    padding: 6px 10px;
+  }
+
+  body.touch-mode .action-btn__body strong {
+    font-size: 14px;
+  }
+
+  body.touch-mode .action-btn__body small,
+  body.touch-mode .action-btn--join .action-btn__body small {
+    font-size: 7px;
+  }
+
+  body.touch-mode .join-row {
+    grid-template-columns: 1fr 112px;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  body.touch-mode .solo-btn {
+    margin-top: 4px;
+    padding: 4px 2px;
+    font-size: 10px;
+  }
+
+  body.touch-mode .solo-btn small {
+    font-size: 8px;
   }
 }

@@ -65,7 +65,11 @@ export function createMobileControls(game, canvas) {
   const stick = element('div', 'touch-stick', '<i class="touch-stick__ring"></i><i class="touch-stick__knob"></i>');
   const aimGroup = element('div', 'touch-aim-group');
   const fireGroup = element('div', 'touch-fire-group');
-  const actionsToggle = element('button', 'touch-actions-toggle', '<span>ACTIONS</span><i aria-hidden="true">▾</i>');
+  const actionsToggle = element(
+    'button',
+    'touch-actions-toggle',
+    '<span class="touch-actions-toggle__dots" aria-hidden="true">•••</span><span class="touch-actions-toggle__label">ACTIONS</span>',
+  );
   actionsToggle.id = 'touchActionsToggle';
   actionsToggle.type = 'button';
   actionsToggle.setAttribute('aria-label', 'Open quick actions');
@@ -239,7 +243,7 @@ export function createMobileControls(game, canvas) {
     const endButton = (event) => {
       event.preventDefault();
       releaseButton(button);
-      if (button.parentElement === drawerGrid) setDrawerOpen(false, false);
+      if (button.parentElement === drawerGrid) setDrawerOpen(false);
     };
     button.addEventListener('pointerup', endButton);
     button.addEventListener('pointercancel', endButton);
